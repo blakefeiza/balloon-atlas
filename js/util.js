@@ -101,50 +101,47 @@ A.sizeToX = v => { const [a, b] = A.sizeRange; return A.clamp((Math.log(v) - Mat
 A.fmtVol = v => v ? A.int(v) + ' cu ft' : '—';
 A.fmtVolShort = v => v >= 1000 ? Math.round(v / 1000) + 'k' : String(v);
 
-/* ---------- balloon icon: flat, matte, panelled envelope ---------- */
-A.envPath = w => `M32 3C${32 + w * 1.05} 3 ${32 + w * 1.15} 34 ${32 + w * .55} 50L40 58H24L${32 - w * .55} 50C${32 - w * 1.15} 34 ${32 - w * 1.05} 3 32 3Z`;
-A.halfW = shape => shape === 'Racer' ? 15 : shape === 'Special shape' ? 28 : 25;
+/* ---------- balloon sprite (canvas) ---------- */
+A.spriteCache = new Map();
+A.sprite = function (color, shape = 'Round') {
+  const key = color + shape;
+  let c = A.spriteCache.get(key); if (c) return c;
+  const W = 64, H = 84; c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const w = shape === 'Racer' ? 15 : shape === 'Special shape' ? 28 : 25;      // half-width
+  const cx = W / 2, top = 3, bot = 58;
+  const path = () => { g.beginPath(); g.moveTo(cx, top);
+    g.bezierCurveTo(cx + w * 1.05, top, cx + w * 1.15, 34, cx + w * .55, 50);
+    g.lineTo(cx + 8, bot); g.lineTo(cx - 8, bot); g.lineTo(cx - w * .55, 50);
+    g.bezierCurveTo(cx - w * 1.15, 34, cx - w * 1.05, top, cx, top); g.closePath(); };
+  path();
+  const grad = g.createRadialGradient(cx - w * .35, 22, 3, cx, 30, w * 1.5);
+  grad.addColorStop(0, A.shade(color, 1.16)); grad.addColorStop(.45, color); grad.addColorStop(1, A.shade(color, .84));
+  g.fillStyle = grad; g.fill();
+  g.save(); path(); g.clip();
+  g.strokeStyle = 'rgba(255,255,255,.10)'; g.lineWidth = 2.2;
+  for (const k of [-.5, 0, .5]) { g.beginPath(); g.moveTo(cx, top); g.bezierCurveTo(cx + w * k * 2.4, 22, cx + w * k * 1.8, 40, cx + 8 * k * 2, bot); g.stroke(); }
+  if (shape === 'Special shape') { g.fillStyle = 'rgba(255,255,255,.9)'; g.beginPath(); g.arc(cx, 26, 6, 0, 6.3); g.fill(); }
+  g.restore();
+  g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(cx - 9, bot, 18, 4);
+  g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1.4;
+  g.beginPath(); g.moveTo(cx - 8, bot + 4); g.lineTo(cx - 5, 73); g.moveTo(cx + 8, bot + 4); g.lineTo(cx + 5, 73); g.stroke();
+  g.fillStyle = '#6b4423'; g.fillRect(cx - 6, 73, 12, 8);
+  g.fillStyle = 'rgba(255,255,255,.25)'; g.fillRect(cx - 6, 73, 12, 2);
+  A.spriteCache.set(key, c); return c;
+};
 A.shade = (hex, f) => { const n = parseInt(hex.slice(1), 16); let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
   if (f > 1) { const k = f - 1; r += (255 - r) * k; g += (255 - g) * k; b += (255 - b) * k; } else { r *= f; g *= f; b *= f; }
   return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`; };
 
-A.spriteCache = new Map();
-A.sprite = function (color, shape = 'Round') {
-  const key = color + shape; let c = A.spriteCache.get(key); if (c) return c;
-  c = document.createElement('canvas'); c.width = 64; c.height = 84; const g = c.getContext('2d');
-  const env = new Path2D(A.envPath(A.halfW(shape)));
-  g.fillStyle = A.shade(color, .78); g.fill(env);                       // outer gores
-  g.save(); g.clip(env);
-  for (const [k, f] of [[.64, 1], [.3, 1.16]]) {                         // nested inner gores
-    g.save(); g.translate(32, 0); g.scale(k, 1); g.translate(-32, 0); g.fillStyle = A.shade(color, f); g.fill(env); g.restore();
-  }
-  g.fillStyle = 'rgba(255,246,228,.9)'; g.fillRect(0, 30, 64, 6);        // equator band
-  g.fillStyle = A.shade(color, .6); g.fillRect(0, 36, 64, 1.6);
-  g.restore();
-  g.lineJoin = 'round'; g.lineWidth = 2; g.strokeStyle = 'rgba(24,12,48,.62)'; g.stroke(env);
-  g.fillStyle = A.shade(color, .55); g.fillRect(23, 57, 18, 4);          // skirt
-  g.strokeStyle = 'rgba(24,12,48,.7)'; g.lineWidth = 1.3; g.beginPath(); g.moveTo(25, 61); g.lineTo(27.5, 73); g.moveTo(39, 61); g.lineTo(36.5, 73); g.stroke();
-  g.fillStyle = '#5a3a22'; g.fillRect(26, 73, 12, 8); g.strokeStyle = 'rgba(24,12,48,.7)'; g.strokeRect(26, 73, 12, 8);
-  A.spriteCache.set(key, c); return c;
-};
-
-/* bulk-view icon: one flat shape, no outline, so dense columns read as clean color fields */
-A.spriteSimple = function (color, shape = 'Round') {
-  const key = 's' + color + shape; let c = A.spriteCache.get(key); if (c) return c;
-  c = document.createElement('canvas'); c.width = 64; c.height = 84; const g = c.getContext('2d');
-  g.fillStyle = color; g.fill(new Path2D(A.envPath(A.halfW(shape) * .92)));
-  g.fillStyle = A.shade(color, .72); g.fillRect(27, 59, 10, 13);   // mouth + basket as one quiet stem
-  A.spriteCache.set(key, c); return c;
-};
-
-/* same icon as inline SVG (card hero, glyph) */
-A.balloonSVG = (color, shape = 'Round', cls = 'art') => {
-  const w = A.halfW(shape), id = 'e' + Math.floor(Math.random() * 1e8), d = A.envPath(w);
-  const lens = (k, f) => `<path d="${d}" fill="${A.shade(color, f)}" transform="translate(32 0) scale(${k} 1) translate(-32 0)"/>`;
-  return `<svg class="${cls}" viewBox="0 0 64 84" aria-hidden="true"><defs><clipPath id="${id}"><path d="${d}"/></clipPath></defs>
-  <path d="${d}" fill="${A.shade(color, .78)}"/><g clip-path="url(#${id})">${lens(.64, 1)}${lens(.3, 1.16)}<rect y="30" width="64" height="6" fill="rgba(255,246,228,.9)"/><rect y="36" width="64" height="1.6" fill="${A.shade(color, .6)}"/></g>
-  <path d="${d}" fill="none" stroke="rgba(24,12,48,.62)" stroke-width="2" stroke-linejoin="round"/>
-  <rect x="23" y="57" width="18" height="4" fill="${A.shade(color, .55)}"/><path d="M25 61L27.5 73M39 61L36.5 73" stroke="rgba(24,12,48,.7)" stroke-width="1.3"/><rect x="26" y="73" width="12" height="8" fill="#5a3a22" stroke="rgba(24,12,48,.7)"/></svg>`;
+/* inline SVG balloon art for the card hero fallback */
+A.balloonSVG = (color, shape = 'Round') => {
+  const w = shape === 'Racer' ? 15 : shape === 'Special shape' ? 28 : 25;
+  const id = 'g' + Math.floor(Math.random() * 1e6);
+  return `<svg class="art" viewBox="0 0 64 84" aria-hidden="true"><defs><radialGradient id="${id}" cx=".38" cy=".3" r=".8"><stop offset="0" stop-color="${A.shade(color, 1.16)}"/><stop offset=".45" stop-color="${color}"/><stop offset="1" stop-color="${A.shade(color, .84)}"/></radialGradient></defs>
+  <path d="M32 3C${32 + w * 1.05} 3 ${32 + w * 1.15} 34 ${32 + w * .55} 50L40 58H24L${32 - w * .55} 50C${32 - w * 1.15} 34 ${32 - w * 1.05} 3 32 3Z" fill="url(#${id})"/>
+  <path d="M32 3C${32 + w * 1.2} 22 ${32 + w * .9} 40 40 58M32 3C${32 - w * 1.2} 22 ${32 - w * .9} 40 24 58M32 3V58" stroke="rgba(255,255,255,.10)" stroke-width="2" fill="none"/>
+  <rect x="23" y="58" width="18" height="4" fill="rgba(0,0,0,.45)"/><path d="M24 62L27 73M40 62L37 73" stroke="rgba(255,255,255,.55)" stroke-width="1.4"/><rect x="26" y="73" width="12" height="8" fill="#6b4423"/></svg>`;
 };
 
 A.colorOf = b => { const m = A.MODES[A.S.colorBy]; return m.colors[m.cat(b)] || A.UNK; };

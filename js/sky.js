@@ -159,7 +159,7 @@ A.Sky = (function () {
 
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawBackground(); drawGround();
-    const t = S.t, zs = Math.pow(cam.zoom, .55), R = 3.9 * zs;
+    const t = S.t, zs = Math.pow(cam.zoom, .55), R = 4.6 * zs;
     const catFn = A.MODES[S.colorBy].cat;
     const gc = new Array(groups.length).fill(0), cc = {}; let aloft = 0;
     const N = order.length;
@@ -192,19 +192,19 @@ A.Sky = (function () {
       if (i === hoverIdx) { hovDraw = [b, sx, sy, r, alpha]; continue; }
       draw(b, sx, sy, r, alpha);
     }
-    if (hovDraw) { const [b, sx, sy, r, a] = hovDraw; ring(sx, sy - r * 1.6, r * 1.9, 'rgba(255,255,255,.35)', 1.2); draw(b, sx, sy, r * 1.4, 1, true); }
-    if (selDraw) { const [b, sx, sy, r] = selDraw; beacon(sx, sy, r); draw(b, sx, sy, r * 1.55, 1, true); }
+    if (hovDraw) { const [b, sx, sy, r, a] = hovDraw; ring(sx, sy - r * 1.6, r * 1.9, 'rgba(255,255,255,.35)', 1.2); draw(b, sx, sy, r * 1.4, 1); }
+    if (selDraw) { const [b, sx, sy, r] = selDraw; beacon(sx, sy, r); draw(b, sx, sy, r * 1.55, 1); }
     counts = { groups: gc, cats: cc, aloft };
     drawAxis(t);
     if (A.ui) A.ui.frame(t, counts);
     requestAnimationFrame(render);
   }
 
-  function draw(b, sx, sy, r, alpha, detail) {
+  function draw(b, sx, sy, r, alpha) {
     if (r < 1.7) { g.globalAlpha = alpha; g.fillStyle = b.col; g.fillRect(sx - r, sy - r * 2, r * 2, r * 2.4); g.globalAlpha = 1; return; }
-    const dw = r * 2.7, dh = dw * 84 / 64, sh = b.shp === 'Racer' || b.shp === 'Special shape' ? b.shp : 'Round';
-    g.globalAlpha = alpha * (detail || r >= 10 ? 1 : .94);
-    g.drawImage(detail || r >= 10 ? A.sprite(b.col, sh) : A.spriteSimple(b.col, sh), sx - dw / 2, sy - dh, dw, dh);
+    const dw = r * 2.7, dh = dw * 84 / 64;
+    g.globalAlpha = alpha;
+    g.drawImage(A.sprite(b.col, b.shp === 'Racer' || b.shp === 'Special shape' ? b.shp : 'Round'), sx - dw / 2, sy - dh, dw, dh);
     g.globalAlpha = 1;
   }
   function ring(x, y, rad, col, w) { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(x, y, rad, 0, 6.3); g.stroke(); }
