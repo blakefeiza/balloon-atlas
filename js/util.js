@@ -128,6 +128,15 @@ A.sprite = function (color, shape = 'Round') {
   A.spriteCache.set(key, c); return c;
 };
 
+/* bulk-view icon: one flat shape, no outline, so dense columns read as clean color fields */
+A.spriteSimple = function (color, shape = 'Round') {
+  const key = 's' + color + shape; let c = A.spriteCache.get(key); if (c) return c;
+  c = document.createElement('canvas'); c.width = 64; c.height = 84; const g = c.getContext('2d');
+  g.fillStyle = color; g.fill(new Path2D(A.envPath(A.halfW(shape) * .92)));
+  g.fillStyle = A.shade(color, .72); g.fillRect(27, 59, 10, 13);   // mouth + basket as one quiet stem
+  A.spriteCache.set(key, c); return c;
+};
+
 /* same icon as inline SVG (card hero, glyph) */
 A.balloonSVG = (color, shape = 'Round', cls = 'art') => {
   const w = A.halfW(shape), id = 'e' + Math.floor(Math.random() * 1e8), d = A.envPath(w);
