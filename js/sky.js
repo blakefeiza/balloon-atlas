@@ -11,7 +11,7 @@ A.Sky = (function () {
   let cv, g, bgc, sc, sg, glc, gl, W = 0, H = 0, dpr = 1;
   const cam = { zoom: 1, tx: 0, ty: 0, tz: 1, ttx: 0, tty: 0, flying: false };
   const PAD = 18, MAX_AGE = 63, STRIDE = 12, LM = 80, SHAPES = ['Round', 'Racer', 'Special shape'];
-  let GY = 0, PPY = 1, stars = [];
+  let GY = 0, PPY = 1, stars = [], sizeK = 1, hit, layersEl, vcam = null, gestureTimer = 0, pendingCommit = false, axisW = null;
   let groups = [], layoutT = 1, mixE = 1, layoutStart = 0, groupsVer = 0;
   let order = [], N = 0, inst = null;
   let hoverIdx = -1, hoverReq = null, dragging = null, camReq = null, last = 0, dirty = true;
@@ -78,11 +78,11 @@ A.Sky = (function () {
 
   /* ============ geometry ============ */
   function resize() {
-    const r = cv.getBoundingClientRect(); if (r.width < 2 || r.height < 2) { W = H = 0; return; }
+    const r = hit.getBoundingClientRect(); if (r.width < 2 || r.height < 2) { W = H = 0; return; }
     dpr = Math.min(window.devicePixelRatio || 1, backend === '2d' ? 1.5 : 2);
     W = r.width; H = r.height; layerDirty = true;
     for (const c of [bgc, sc, glc, cv]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
-    GY = H - 40; PPY = (GY - 36) / MAX_AGE;
+    GY = H - 40; PPY = (GY - 36) / MAX_AGE; sizeK = A.clamp(W / 900, .6, 1); axisW = null;   // smaller balloons in narrow frames so columns don't fuse
     stars = Array.from({ length: 140 }, (_, i) => ({ x: A.hash('sx' + i) * W, y: A.hash('sy' + i) * H * .55, r: .4 + A.hash('sr' + i) * 1.1, p: A.hash('sp' + i) * 6.28 }));
     drawBg(); labelCache = null; sceneKey = ''; clampCam(); dirty = true;
   }
@@ -111,7 +111,7 @@ A.Sky = (function () {
     }
     P.x = (PAD + curX(b) * (W - 2 * PAD)) * cam.zoom + cam.tx;
     P.y = (GY - Math.min(age, MAX_AGE + 2) * PPY) * cam.zoom + cam.ty;
-    P.r = 4.6 * Math.pow(cam.zoom, .55) * b.rv * sc2;
+    P.r = 4.6 * sizeK * Math.pow(cam.zoom, .55) * b.rv * sc2;
     return true;
   }
 
@@ -133,7 +133,7 @@ A.Sky = (function () {
     const c = sg; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
     c.save(); c.textBaseline = 'middle';
     c.font = '11px "DM Sans",sans-serif'; c.strokeStyle = 'rgba(255,255,255,.1)'; c.fillStyle = 'rgba(255,255,255,.6)'; c.setLineDash([2, 5]);
-    for (let a = 10; a <= 60; a += 10) { const y = toSY(baseY(a)); if (y < 30 || y > GY + 60) continue; c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke(); c.fillText(a + ' yrs aloft', 12, y - 8); }
+    for (let a = 10; a <= 60; a += 10) { const y = toSY(baseY(a)); if (y < 30 || y > GY + 60) continue; c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke(); }
     c.setLineDash([]);
     if (!groups.axis) { c.strokeStyle = 'rgba(255,255,255,.06)'; groups.forEach((gr, i) => { if (!i) return; const x = toSX(baseX(gr.x - gr.w / 2)); c.beginPath(); c.moveTo(x, 0); c.lineTo(x, toSY(GY)); c.stroke(); }); }
     c.restore();
@@ -146,6 +146,14 @@ A.Sky = (function () {
       g.fillStyle = col; g.beginPath(); g.moveTo(0, H);
       for (let x = 0; x <= W; x += 8) g.lineTo(x, gy + off - amp * Math.sin((x - cam.tx * .5) * fr + off) * cam.zoom ** .3 - amp * .6 * Math.sin((x - cam.tx * .5) * fr * 2.3));
       g.lineTo(W, H); g.fill();
+    }
+    // altitude labels: readable pills pinned to the left edge, drawn above the balloons
+    g.font = '600 11.5px "DM Sans",sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
+    for (let a = 10; a <= 60; a += 10) {
+      const y = toSY(baseY(a)); if (y < 34 || y > GY * cam.zoom + cam.ty - 4) continue;
+      const txt = W < 560 ? a + ' yrs' : a + ' yrs aloft', w = (axisW || (axisW = {}))[txt] || (axisW[txt] = g.measureText(txt).width);
+      g.fillStyle = 'rgba(16,10,44,.62)'; g.beginPath(); g.roundRect ? g.roundRect(6, y - 10, w + 14, 20, 10) : g.rect(6, y - 10, w + 14, 20); g.fill();
+      g.fillStyle = 'rgba(255,255,255,.96)'; g.fillText(txt, 13, y + .5);
     }
     const ly = Math.min(H - 12, toSY(GY) + 26);
     if (!labelCache) {                                   // truncated names depend only on zoom/layout, not on every pan frame
@@ -274,7 +282,7 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
     gl.uniform2f(U.uRes, W, H); gl.uniform2f(U.uCam, cam.tx, cam.ty);
     gl.uniform2f(U.uCellPx, CELL_W, CELL_H); gl.uniform2f(U.uSpritePx, SPR_W, SPR_H);
     gl.uniform1f(U.uT, t); gl.uniform1f(U.uMix, mixE); gl.uniform1f(U.uZoom, cam.zoom); gl.uniform1f(U.uPad, PAD); gl.uniform1f(U.uGY, GY);
-    gl.uniform1f(U.uPPY, PPY); gl.uniform1f(U.uR, 4.6 * Math.pow(cam.zoom, .55)); gl.uniform1f(U.uMaxAge, MAX_AGE); gl.uniform1f(U.uFade, A.ease(fadeT));
+    gl.uniform1f(U.uPPY, PPY); gl.uniform1f(U.uR, 4.6 * sizeK * Math.pow(cam.zoom, .55)); gl.uniform1f(U.uMaxAge, MAX_AGE); gl.uniform1f(U.uFade, A.ease(fadeT));
     gl.uniform1f(U.uGhost, S.filters.ghost ? 1 : 0); gl.uniform1f(U.uPadPx, CELL_OFF); gl.uniform1f(U.uCols, COLS);
     const selI = S.sel && S.sel.sky ? S.sel.oi : -1;
     gl.uniform1f(U.uSel, selI); gl.uniform1f(U.uHov, hoverIdx);
@@ -294,7 +302,7 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
     const c = cvs.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, lw, lh); c.setTransform(dpr, 0, 0, dpr, 0, 0);
     for (const b of list) {
       if (keep && !keep(b)) continue;
-      const dw = 4.6 * b.rv * 2.7, dh = dw * 1.3125, x = LM + PAD + b.xt * (W - 2 * PAD), y = LM + GY + (b.t0 - T0) * PPY;
+      const dw = 4.6 * sizeK * b.rv * 2.7, dh = dw * 1.3125, x = LM + PAD + b.xt * (W - 2 * PAD), y = LM + GY + (b.t0 - T0) * PPY;
       if (!b.pass) c.globalAlpha = .05;
       c.drawImage(pickTier(b, dw), x - dw / 2, y - dh, dw, dh);
       if (!b.pass) c.globalAlpha = 1;
@@ -314,7 +322,7 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
       gx.drawImage(layer, x0 * dpr, y0 * dpr, W * dpr, dh * dpr, 0, 0, W, dh);      // every in-service balloon: one blit
       gx.drawImage(layerOut, x0 * dpr, y0 * dpr, W * dpr, dh * dpr, 0, 0, W, dh);   // every balloon retiring after this year: one blit
     }
-    const list = useLayer ? outList : order, ghost = S.filters.ghost, R = 4.6 * Math.pow(cam.zoom, .55), sel = S.sel;
+    const list = useLayer ? outList : order, ghost = S.filters.ghost, R = 4.6 * sizeK * Math.pow(cam.zoom, .55), sel = S.sel;
     for (let i = 0, n = list.length; i < n; i++) {
       const b = list[i], life = t - b.t0; if (life < 0) continue;
       if (useLayer && b.t1 >= Y + 1) continue;                                      // already in the cached layer
@@ -343,8 +351,8 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
   function render(now) {
     requestAnimationFrame(render);
     const dtRaw = (now - last) / 1000 || 0, dt = Math.min(.05, dtRaw); last = now;
+    if (vcam) return;                                  // mid-gesture the compositor moves the finished frame; we redraw once on release
     let busy = false;
-    if (camReq) { const c = camReq; camReq = null; c(); busy = true; }          // drag / pinch are applied once per frame, not once per event
     if (S.playing) {
       S.t += dt * S.speed * 2; busy = true;
       if (S.t >= A.meta.now + .99) { S.t = A.meta.now + .99; A.ui.setPlaying(false); }
@@ -359,7 +367,7 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
     if (fadeT < 1) { fadeT = Math.min(1, (now - fadeStart) / 260); busy = true; }
     if (hoverReq) {
       const [mx, my] = hoverReq; hoverReq = null; const i = pick(mx, my);
-      if (i !== hoverIdx) { hoverIdx = i; cv.classList.toggle('hover', i >= 0); dirty = true; if (i < 0) A.ui.hideTip(); }
+      if (i !== hoverIdx) { hoverIdx = i; hit.classList.toggle('hover', i >= 0); dirty = true; if (i < 0) A.ui.hideTip(); }
       if (i >= 0) A.ui.showTip(order[i], mx, my);
     }
     if (S.sel) busy = true;                                        // selection beacon pulses
@@ -372,6 +380,7 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
     if (now - lastCount > 120 || !busy) { computeCounts(t); lastCount = now; }
     drawFx(t);
     A.perf.dpr = dpr; A.perf.size = glc.width + 'x' + glc.height;
+    if (pendingCommit) { layersEl.style.transform = ''; pendingCommit = false; }   // swap the temporary transform for the freshly drawn frame
     if (A.ui) A.ui.frame(t, counts, !busy);
   }
 
@@ -385,51 +394,66 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
     }
     return best;
   }
+  /* Gestures: while the user drags, pinches or wheels, the layers that are already drawn are moved by the browser's
+     compositor (a CSS transform: no canvas work at all). The camera is committed and the sky redrawn once, on release. */
+  function beginGesture() { if (!vcam) vcam = { zoom: cam.zoom, tx: cam.tx, ty: cam.ty }; cam.flying = false; }
+  function clampV(v) { v.zoom = A.clamp(v.zoom, 1, 14); v.tx = A.clamp(v.tx, W * (1 - v.zoom) - 60, 60); v.ty = A.clamp(v.ty, H * (1 - v.zoom) - 80, 60); }
+  function applyGesture() { const k = vcam.zoom / cam.zoom; layersEl.style.transform = `translate3d(${vcam.tx - cam.tx * k}px,${vcam.ty - cam.ty * k}px,0) scale(${k})`; }
+  function endGesture() {
+    if (!vcam) return; cam.zoom = vcam.zoom; cam.tx = vcam.tx; cam.ty = vcam.ty; vcam = null;
+    clampCam(); pendingCommit = true; dirty = true;
+  }
   function bind() {
-    const rect = () => cv.getBoundingClientRect();
+    let R0 = hit.getBoundingClientRect();
     const ptrs = new Map(); let pinch = null;
-    cv.addEventListener('pointerdown', e => {
-      cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); cam.flying = false;
-      if (ptrs.size === 2) { const [p, q] = [...ptrs.values()]; pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), z: cam.zoom, tx: cam.tx, ty: cam.ty, cx: (p.x + q.x) / 2, cy: (p.y + q.y) / 2 }; dragging = null; }
-      else dragging = { x: e.clientX, y: e.clientY, tx: cam.tx, ty: cam.ty, moved: false };
+    const base = () => vcam || cam;
+    hit.addEventListener('pointerdown', e => {
+      R0 = hit.getBoundingClientRect(); try { hit.setPointerCapture(e.pointerId); } catch (err) {} ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); cam.flying = false;
+      if (ptrs.size === 2) { const [p, q] = [...ptrs.values()], c = base(); pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), z: c.zoom, tx: c.tx, ty: c.ty, cx: (p.x + q.x) / 2 - R0.left, cy: (p.y + q.y) / 2 - R0.top }; dragging = null; }
+      else { const c = base(); dragging = { x: e.clientX, y: e.clientY, tx: c.tx, ty: c.ty, moved: false }; }
     });
-    cv.addEventListener('pointermove', e => {
-      const r = rect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    hit.addEventListener('pointermove', e => {
       if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinch && ptrs.size === 2) {
-        const [p, q] = [...ptrs.values()], d = Math.hypot(p.x - q.x, p.y - q.y), cx = (p.x + q.x) / 2 - r.left, cy = (p.y + q.y) / 2 - r.top;
-        const pc = pinch; camReq = () => { const nz = A.clamp(pc.z * d / pc.d, 1, 14), k = nz / pc.z, ox = pc.cx - r.left, oy = pc.cy - r.top; cam.zoom = nz; cam.tx = cx - (ox - pc.tx) * k; cam.ty = cy - (oy - pc.ty) * k; clampCam(); };
-        A.ui.hideTip(); return;
+        const [p, q] = [...ptrs.values()], d = Math.hypot(p.x - q.x, p.y - q.y), cx = (p.x + q.x) / 2 - R0.left, cy = (p.y + q.y) / 2 - R0.top;
+        beginGesture(); const nz = A.clamp(pinch.z * d / pinch.d, 1, 14), k = nz / pinch.z;
+        vcam.zoom = nz; vcam.tx = cx - (pinch.cx - pinch.tx) * k; vcam.ty = cy - (pinch.cy - pinch.ty) * k; clampV(vcam); applyGesture(); A.ui.hideTip(); return;
       }
       if (dragging) {
         const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
-        if (Math.abs(dx) + Math.abs(dy) > 6) { dragging.moved = true; cv.classList.add('drag'); A.ui.hideTip(); }
-        if (dragging.moved) { const d0 = dragging; camReq = () => { cam.tx = d0.tx + dx; cam.ty = d0.ty + dy; clampCam(); }; }
+        if (!dragging.moved && Math.abs(dx) + Math.abs(dy) > 5) { dragging.moved = true; hit.classList.add('drag'); A.ui.hideTip(); beginGesture(); }
+        if (dragging.moved) { vcam.tx = dragging.tx + dx; vcam.ty = dragging.ty + dy; clampV(vcam); applyGesture(); }
         return;
       }
       if (e.pointerType === 'touch') return;
-      hoverReq = [mx, my];
+      hoverReq = [e.clientX - R0.left, e.clientY - R0.top];
     });
     const up = e => {
       ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null;
-      const was = dragging; dragging = null; cv.classList.remove('drag');
+      const was = dragging; dragging = null; hit.classList.remove('drag');
+      if (ptrs.size === 0) endGesture();
       if (e.type === 'pointerup' && was && !was.moved) {
-        const r = rect(), i = pick(e.clientX - r.left, e.clientY - r.top);
+        const i = pick(e.clientX - R0.left, e.clientY - R0.top);
         if (i >= 0) A.ui.select(order[i].id, { fly: true }); else if (S.sel) A.ui.select(null);
       }
     };
-    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-    cv.addEventListener('pointerleave', () => { hoverReq = null; hoverIdx = -1; A.ui.hideTip(); cv.classList.remove('hover'); dirty = true; });
-    cv.addEventListener('wheel', e => { e.preventDefault(); const r = rect(), cx = e.clientX - r.left, cy = e.clientY - r.top, k = Math.exp(-e.deltaY * .0015); camReq = () => zoomAt(cx, cy, k); }, { passive: false });
-    cv.addEventListener('dblclick', e => { const r = rect(); zoomAt(e.clientX - r.left, e.clientY - r.top, 1.9); });
-    new ResizeObserver(() => { resize(); dirty = true; }).observe(cv);
+    hit.addEventListener('pointerup', up); hit.addEventListener('pointercancel', up);
+    hit.addEventListener('pointerleave', () => { hoverReq = null; hoverIdx = -1; A.ui.hideTip(); hit.classList.remove('hover'); dirty = true; });
+    hit.addEventListener('wheel', e => {
+      e.preventDefault(); R0 = hit.getBoundingClientRect(); beginGesture();
+      const cx = e.clientX - R0.left, cy = e.clientY - R0.top, nz = A.clamp(vcam.zoom * Math.exp(-e.deltaY * .0015), 1, 14), kk = nz / vcam.zoom;
+      vcam.tx = cx - (cx - vcam.tx) * kk; vcam.ty = cy - (cy - vcam.ty) * kk; vcam.zoom = nz; clampV(vcam); applyGesture();
+      clearTimeout(gestureTimer); gestureTimer = setTimeout(() => { if (!ptrs.size) endGesture(); }, 140);
+    }, { passive: false });
+    hit.addEventListener('dblclick', e => { R0 = hit.getBoundingClientRect(); zoomAt(e.clientX - R0.left, e.clientY - R0.top, 1.9); });
+    new ResizeObserver(() => { resize(); dirty = true; }).observe(hit);
     glc.addEventListener('webglcontextlost', e => { e.preventDefault(); glOK = false; backend = 'none'; });
-    glc.addEventListener('webglcontextrestored', () => { try { initGL(); buildAtlas(); writeInstances(); } catch (e) {} dirty = true; });
+    glc.addEventListener('webglcontextrestored', () => { try { initGL(); buildAtlas(); writeInstances(); } catch (err) {} dirty = true; });
   }
 
   return {
     init(canvas) {
-      cv = canvas; g = cv.getContext('2d');
+      cv = canvas; g = cv.getContext('2d'); hit = A.$('#hitLayer'); layersEl = A.$('#layers');
       bgc = A.$('#bgCanvas'); sc = A.$('#sceneCanvas'); sg = sc.getContext('2d'); glc = A.$('#glCanvas');
       order = A.B.filter(b => b.sky).sort((a, b) => a.t0 - b.t0); N = order.length; order.forEach((b, i) => b.oi = i);
       for (const b of A.B) { b.xs = b.xt = .5; b.oi = b.oi ?? -1; }

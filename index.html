@@ -30,9 +30,12 @@
     <!-- SKY -->
     <section id="sky" class="view">
       <canvas id="bgCanvas" class="layer"></canvas>
-      <canvas id="sceneCanvas" class="layer"></canvas>
-      <canvas id="glCanvas" class="layer"></canvas>
-      <canvas id="skyCanvas"></canvas>
+      <div id="layers">
+        <canvas id="sceneCanvas" class="layer"></canvas>
+        <canvas id="glCanvas" class="layer"></canvas>
+        <canvas id="skyCanvas" class="layer"></canvas>
+      </div>
+      <div id="hitLayer" aria-label="Sky: drag to pan, scroll or pinch to zoom, click a balloon"></div>
       <div id="axisLabels"></div>
 
       <div class="hud hud-tl" id="hudTL">

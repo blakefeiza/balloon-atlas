@@ -34,9 +34,6 @@ input{font:inherit;color:inherit}
 #stage{position:relative;min-height:0;overflow:hidden}
 .view{position:absolute;inset:0}
 .view[hidden]{display:none}
-#skyCanvas{position:absolute;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}
-#skyCanvas.drag{cursor:grabbing}
-#skyCanvas.hover{cursor:pointer}
 #axisLabels{position:absolute;inset:0;pointer-events:none}
 #axisLabels span{position:absolute;font-size:11px;color:rgba(255,255,255,.45);white-space:nowrap;transform:translate(-50%,0);text-shadow:0 1px 2px rgba(0,0,0,.4)}
 #axisLabels span.y{transform:none;left:10px;letter-spacing:.04em}
@@ -295,5 +292,9 @@ svg.chart .peer{fill:var(--ink);opacity:.4}
 @media (max-width:760px){#yearBig{top:auto;bottom:6px;right:10px;width:auto}.hud-tl{max-width:calc(100% - 56px)}}
 
 .layer{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:block}
-#skyCanvas{will-change:auto}
 #errBanner{position:fixed;left:8px;right:8px;bottom:8px;z-index:200;background:#b3261e;color:#fff;font-size:12px;padding:8px 12px;border-radius:6px;word-break:break-word}
+
+#layers{position:absolute;inset:0;transform-origin:0 0;will-change:transform;pointer-events:none}
+#hitLayer{position:absolute;inset:0;cursor:grab;touch-action:none;z-index:1}
+#hitLayer.drag{cursor:grabbing}#hitLayer.hover{cursor:pointer}
+#legendBar{scrollbar-width:none}#legendBar::-webkit-scrollbar{display:none}
