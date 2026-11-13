@@ -1,7 +1,8 @@
 /* Sky view: canvas renderer, camera, layout, hit-testing, time engine */
 A.Sky = (function () {
   const S = A.S;
-  let cv, g, W = 0, H = 0, dpr = 1;
+  let cv, g, W = 0, H = 0, dpr = 1, quality = Math.min(window.devicePixelRatio || 1, 1.5), slow = 0, hoverReq = null, fading = false, groupsVer = 0, lastCounts = 0;
+  A.perf = { ms: 0, dpr: 1, quality };
   const cam = { zoom: 1, tx: 0, ty: 0, tz: 1, ttx: 0, tty: 0, flying: false };
   const PAD = 18, MAX_AGE = 63;
   let GY = 0, PPY = 1, bgCache = null, stars = [];
@@ -9,7 +10,8 @@ A.Sky = (function () {
   let order = [];                 // balloons on the sky, oldest first (draw order)
   let px, py, pr, pvis;           // last-frame screen geometry for hit testing
   let hoverIdx = -1, dragging = null, clock = 0, last = 0, dirty = true;
-  let counts = { groups: [], cats: {}, aloft: 0 };
+  let catKeys = [], gc = new Int32Array(0), cc = new Int32Array(0);
+  let counts = { groups: gc, catKeys, cc, aloft: 0 };
 
   /* ---------- layout ---------- */
   function computeLayout(mode, animate = true) {
@@ -18,7 +20,7 @@ A.Sky = (function () {
     if (def.cont) {
       groups = [25000, 50000, 90000, 150000, 300000].map(v => ({ key: v, label: A.fmtVolShort(v), x: .04 + .9 * A.sizeToX(v), tick: true }));
       groups.push({ key: 'unk', label: 'size n/a', x: .975, tick: true });
-      for (const b of A.B) b.xt = b.size ? .04 + .9 * A.sizeToX(b.size) + b.jx * .006 : .975 + b.jx * .01;
+      for (const b of A.B) { b.gi = -1; b.xt = b.size ? .04 + .9 * A.sizeToX(b.size) + b.jx * .006 : .975 + b.jx * .01; }
       groups.axis = 'Envelope volume, cu ft (log scale)';
     } else {
       const m = new Map();
@@ -30,6 +32,7 @@ A.Sky = (function () {
       for (const b of A.B) { const i = idx.get(def.cat(b)) ?? G - 1; b.gi = i; b.xt = (i + .5) / G + b.jx * .5 * .84 / G; }
       groups.axis = '';
     }
+    gc = new Int32Array(groups.length); groupsVer++; sceneKey = '';
     if (!animate) { for (const b of A.B) b.x = b.xt; layoutT = 1; } else { layoutT = 0; layoutStart = performance.now(); }
     dirty = true;
   }
@@ -38,7 +41,8 @@ A.Sky = (function () {
   function applyFilters() {
     const f = S.filters, mode = A.MODES[S.colorBy];
     const lo = f.szMin, hi = f.szMax;
-    const q = f.query;
+    catKeys = Object.keys(mode.colors); const cidx = new Map(catKeys.map((k, i) => [k, i])); cc = new Int32Array(catKeys.length);
+    const tcache = new Map();
     for (const b of A.B) {
       let ok = true;
       if (b.status === 'in' && !f.inSvc) ok = false;
@@ -49,17 +53,20 @@ A.Sky = (function () {
       if (ok && f.model && !(A.mkey(b) === f.model.key)) ok = false;
       if (ok && f.fam && b.fam !== f.fam) ok = false;
       b.pass = ok;
-      b.col = mode.colors[mode.cat(b)] || A.UNK;
+      const ck = mode.cat(b); b.ci = cidx.has(ck) ? cidx.get(ck) : catKeys.length - 1;
+      b.col = mode.colors[ck] || A.UNK;
+      const sh = b.shp === 'Racer' || b.shp === 'Special shape' ? b.shp : 'Round', tk = b.col + sh;
+      b.sp = tcache.get(tk) || (tcache.set(tk, A.tiers(b.col, sh)), tcache.get(tk));
     }
-    dirty = true;
+    fading = true; dirty = true;
   }
 
   /* ---------- geometry ---------- */
   function resize() {
-    const r = cv.getBoundingClientRect(); if (r.width < 2 || r.height < 2) { W = H = 0; return; } dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const r = cv.getBoundingClientRect(); if (r.width < 2 || r.height < 2) { W = H = 0; return; } dpr = quality;
     W = r.width; H = r.height; cv.width = W * dpr; cv.height = H * dpr;
     GY = H - 40; PPY = (GY - 36) / MAX_AGE;
-    bgCache = null;
+    skyBase = null; sceneKey = ''; scene = null; A.perf.dpr = dpr;
     stars = Array.from({ length: 140 }, (_, i) => ({ x: A.hash('sx' + i) * W, y: A.hash('sy' + i) * H * .55, r: .4 + A.hash('sr' + i) * 1.1, p: A.hash('sp' + i) * 6.28 }));
     clampCam(); dirty = true;
   }
@@ -77,135 +84,139 @@ A.Sky = (function () {
     cam.tx = cx - (cx - cam.tx) * kk; cam.ty = cy - (cy - cam.ty) * kk; cam.zoom = nz; cam.flying = false; clampCam(); dirty = true;
   }
 
-  function drawBackground() {
-    if (!bgCache) {
-      bgCache = document.createElement('canvas'); bgCache.width = W * dpr; bgCache.height = H * dpr;
-      const c = bgCache.getContext('2d'); c.scale(dpr, dpr);
-      const gr = c.createLinearGradient(0, 0, 0, H);
-      gr.addColorStop(0, '#12103a'); gr.addColorStop(.26, '#2f2576'); gr.addColorStop(.48, '#7a3a8e'); gr.addColorStop(.67, '#cf4f7c'); gr.addColorStop(.84, '#ff8a5c'); gr.addColorStop(1, '#ffcf8a');
-      c.fillStyle = gr; c.fillRect(0, 0, W, H);
-      const sun = c.createRadialGradient(W * .5, H, 10, W * .5, H, H * .7);
-      sun.addColorStop(0, 'rgba(255,236,170,.75)'); sun.addColorStop(1, 'rgba(255,210,150,0)');
-      c.fillStyle = sun; c.fillRect(0, 0, W, H);
-    }
-    g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(bgCache, 0, 0);
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    for (const s of stars) { const a = .35 + .35 * Math.sin(clock * 1.2 + s.p); g.fillStyle = `rgba(255,255,255,${a * (1 - s.y / (H * .6))})`; g.fillRect(s.x, s.y, s.r, s.r); }
+  /* ---------- static scene: sky, stars, rules, hills, group names. Rebuilt only when camera or layout changes ---------- */
+  let scene = null, sceneKey = '', skyBase = null, labelPos = [];
+  function buildSky() {
+    skyBase = document.createElement('canvas'); skyBase.width = Math.round(W * dpr); skyBase.height = Math.round(H * dpr);
+    const c = skyBase.getContext('2d'); c.scale(dpr, dpr);
+    const gr = c.createLinearGradient(0, 0, 0, H);
+    gr.addColorStop(0, '#12103a'); gr.addColorStop(.26, '#2f2576'); gr.addColorStop(.48, '#7a3a8e'); gr.addColorStop(.67, '#cf4f7c'); gr.addColorStop(.84, '#ff8a5c'); gr.addColorStop(1, '#ffcf8a');
+    c.fillStyle = gr; c.fillRect(0, 0, W, H);
+    const sun = c.createRadialGradient(W * .5, H, 10, W * .5, H, H * .7);
+    sun.addColorStop(0, 'rgba(255,236,170,.75)'); sun.addColorStop(1, 'rgba(255,210,150,0)');
+    c.fillStyle = sun; c.fillRect(0, 0, W, H);
+    for (const st of stars) { c.fillStyle = `rgba(255,255,255,${(.25 + .4 * Math.abs(Math.sin(st.p))) * (1 - st.y / (H * .6))})`; c.fillRect(st.x, st.y, st.r, st.r); }
   }
-
-  function drawGround() {
+  function buildScene() {
+    const key = W + '|' + H + '|' + dpr + '|' + cam.zoom.toFixed(3) + '|' + cam.tx.toFixed(1) + '|' + cam.ty.toFixed(1) + '|' + groupsVer;
+    if (key === sceneKey && scene) return;
+    sceneKey = key;
+    if (!skyBase) buildSky();
+    if (!scene) { scene = document.createElement('canvas'); scene.width = skyBase.width; scene.height = skyBase.height; }
+    const c = scene.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(skyBase, 0, 0); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.save(); c.textBaseline = 'middle';
+    c.font = '11px "DM Sans",sans-serif'; c.strokeStyle = 'rgba(255,255,255,.1)'; c.fillStyle = 'rgba(255,255,255,.6)'; c.setLineDash([2, 5]);
+    for (let a = 10; a <= 60; a += 10) { const y = toSY(baseY(a)); if (y < 30 || y > GY + 60) continue; c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke(); c.fillText(a + ' yrs aloft', 12, y - 8); }
+    c.setLineDash([]);
+    if (!groups.axis) { c.strokeStyle = 'rgba(255,255,255,.06)'; groups.forEach((gr, i) => { if (!i) return; const x = toSX(baseX(gr.x - gr.w / 2)); c.beginPath(); c.moveTo(x, 0); c.lineTo(x, toSY(GY)); c.stroke(); }); }
+    // hills
     const gy = toSY(GY) + 2;
-    g.save();
     for (const [off, col, amp, fr] of [[0, 'rgba(58,24,78,.9)', 10, .011], [14, 'rgba(30,14,52,.97)', 8, .017]]) {
-      g.fillStyle = col; g.beginPath(); g.moveTo(0, H);
-      for (let x = 0; x <= W; x += 6) g.lineTo(x, gy + off - amp * Math.sin((x - cam.tx * .5) * fr + off) * cam.zoom ** .3 - amp * .6 * Math.sin((x - cam.tx * .5) * fr * 2.3));
-      g.lineTo(W, H); g.fill();
+      c.fillStyle = col; c.beginPath(); c.moveTo(0, H);
+      for (let x = 0; x <= W; x += 6) c.lineTo(x, gy + off - amp * Math.sin((x - cam.tx * .5) * fr + off) * cam.zoom ** .3 - amp * .6 * Math.sin((x - cam.tx * .5) * fr * 2.3));
+      c.lineTo(W, H); c.fill();
     }
-    g.restore();
-  }
-
-  function drawAxis(tNow) {
-    g.save(); g.textBaseline = 'middle';
-    // altitude rules (age)
-    g.font = '11px "DM Sans",sans-serif'; g.strokeStyle = 'rgba(255,255,255,.1)'; g.fillStyle = 'rgba(255,255,255,.6)'; g.setLineDash([2, 5]);
-    for (let a = 10; a <= 60; a += 10) {
-      const y = toSY(baseY(a)); if (y < 30 || y > GY + 60) continue;
-      g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
-      g.fillText(a + ' yrs aloft', 12, y - 8);
-    }
-    g.setLineDash([]);
-    // group labels on the hills
-    const ly = Math.min(H - 12, toSY(GY) + 26);
-    g.textAlign = 'center';
+    // group names (counts are drawn live)
+    const ly = Math.min(H - 12, toSY(GY) + 26); c.textAlign = 'center'; labelPos = [];
     groups.forEach((gr, i) => {
-      const x = toSX(baseX(gr.x));
-      if (x < -60 || x > W + 60) return;
-      const n = counts.groups[i] || 0;
-      g.font = '700 12px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.85)';
-      let lab = gr.label; const mw = gr.w ? gr.w * (W - 2 * PAD) * cam.zoom - 6 : 200; while (lab.length > 3 && g.measureText(lab).width > mw) lab = lab.slice(0, -2).trimEnd() + '…';
-      g.fillText(lab, x, ly - (gr.tick ? 0 : 6));
-      if (!gr.tick && mw > 64) { g.font = '11px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.5)'; g.fillText(A.int(n) + ' aloft', x, ly + 8); }
+      const x = toSX(baseX(gr.x)); if (x < -60 || x > W + 60) return;
+      c.font = '700 12px "DM Sans",sans-serif'; c.fillStyle = 'rgba(255,255,255,.85)';
+      let lab = gr.label; const mw = gr.w ? gr.w * (W - 2 * PAD) * cam.zoom - 6 : 200; while (lab.length > 3 && c.measureText(lab).width > mw) lab = lab.slice(0, -2).trimEnd() + '…';
+      c.fillText(lab, x, ly - (gr.tick ? 0 : 6));
+      if (!gr.tick && mw > 64) labelPos.push([i, x, ly + 8]);
     });
-    if (groups.axis) { g.font = '11px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.5)'; g.fillText(groups.axis, W / 2, ly + 14); }
-    // group separators
-    if (!groups.axis) { g.strokeStyle = 'rgba(255,255,255,.06)'; g.lineWidth = 1; groups.forEach((gr, i) => { if (!i) return; const x = toSX(baseX(gr.x - gr.w / 2)); g.beginPath(); g.moveTo(x, 0); g.lineTo(x, toSY(GY)); g.stroke(); }); }
-    g.restore();
+    if (groups.axis) { c.font = '11px "DM Sans",sans-serif'; c.fillStyle = 'rgba(255,255,255,.5)'; c.fillText(groups.axis, W / 2, ly + 14); }
+    c.restore();
   }
 
-  /* ---------- render ---------- */
+  /* ---------- render: only runs a frame when something is moving or changed ---------- */
   function render(now) {
-    const dt = Math.min(.05, (now - last) / 1000 || 0); last = now; clock += dt;
-    // time
+    requestAnimationFrame(render);
+    let dtRaw = (now - last) / 1000 || 0; last = now;
+    const dt = Math.min(.05, dtRaw); clock += dt;
+    let busy = false;
     if (S.playing) {
-      S.t += dt * S.speed * 2; dirty = true;
+      S.t += dt * S.speed * 2; busy = true;
       if (S.t >= A.meta.now + .99) { S.t = A.meta.now + .99; A.ui.setPlaying(false); }
+      // adaptive resolution: if real frame times stay slow while playing, step the canvas resolution down
+      if (dtRaw > .0 && dtRaw < .25) { slow = dtRaw > .026 ? slow + 1 : Math.max(0, slow - 2); if (slow > 40 && quality > 1) { quality = Math.max(1, quality - .25); slow = 0; A.perf.quality = quality; resize(); } }
     }
-    // layout tween
-    if (layoutT < 1) { layoutT = Math.min(1, (now - layoutStart) / 900); const e = A.ease(layoutT); for (const b of A.B) b.x = A.lerp(b.xs, b.xt, e); dirty = true; }
-    // camera tween
+    if (layoutT < 1) { layoutT = Math.min(1, (now - layoutStart) / 900); const e = A.ease(layoutT); for (const b of A.B) b.x = A.lerp(b.xs, b.xt, e); busy = true; }
     if (cam.flying) {
       const k = 1 - Math.pow(.0009, dt);
       cam.zoom += (cam.tz - cam.zoom) * k; cam.tx += (cam.ttx - cam.tx) * k; cam.ty += (cam.tty - cam.ty) * k;
       if (Math.abs(cam.tz - cam.zoom) < .003 && Math.abs(cam.ttx - cam.tx) < .4) cam.flying = false;
-      dirty = true;
+      busy = true;
     }
-    // filter-alpha tween
-    let anim = false;
-    for (const b of A.B) { const tg = b.pass ? 1 : .05; if (b.fa === undefined) b.fa = tg; if (b.fa !== tg) { b.fa += (tg - b.fa) * Math.min(1, dt * 9); if (Math.abs(tg - b.fa) < .01) b.fa = tg; anim = true; } }
-    if (anim) dirty = true;
-    dirty = true; // ambient sway/twinkle keeps the sky alive
-    if (!dirty || document.hidden || W < 2 || H < 2) { requestAnimationFrame(render); return; }
+    if (fading) {
+      let any = false;
+      for (const b of A.B) { const tg = b.pass ? 1 : .05; if (b.fa === undefined) b.fa = tg; if (b.fa !== tg) { b.fa += (tg - b.fa) * Math.min(1, dt * 9); if (Math.abs(tg - b.fa) < .01) b.fa = tg; any = true; } }
+      fading = any; busy = busy || any;
+    }
+    if (hoverReq) {
+      const [mx, my] = hoverReq; hoverReq = null; const i = pick(mx, my);
+      if (i !== hoverIdx) { hoverIdx = i; cv.classList.toggle('hover', i >= 0); dirty = true; if (i < 0) A.ui.hideTip(); }
+      if (i >= 0) A.ui.showTip(order[i], mx, my);
+    }
+    if (S.sel) busy = true;                           // selection beacon pulses
+    if (!(dirty || busy) || document.hidden || W < 2 || H < 2) return;
     dirty = false;
+    const tStart = performance.now();
 
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawBackground(); drawGround();
+    buildScene(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(scene, 0, 0); g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const t = S.t, zs = Math.pow(cam.zoom, .55), R = 4.6 * zs;
-    const catFn = A.MODES[S.colorBy].cat;
-    const gc = new Array(groups.length).fill(0), cc = {}; let aloft = 0;
     const N = order.length;
     if (!px || px.length !== N) { px = new Float32Array(N); py = new Float32Array(N); pr = new Float32Array(N); pvis = new Uint8Array(N); }
+    gc.fill(0); cc.fill(0); let aloft = 0;
     const sel = S.sel; let selDraw = null, hovDraw = null;
-    const ghost = S.filters.ghost;
+    const ghost = S.filters.ghost, tau = 6.28;
+    const bxOff = PAD, bxK = W - 2 * PAD, z = cam.zoom, tx = cam.tx, ty = cam.ty;
     for (let i = 0; i < N; i++) {
       const b = order[i]; pvis[i] = 0;
       if (t < b.t0) continue;
-      let alpha = Math.min(1, (t - b.t0) / .7), age = t - b.t0, ghostOnly = false;
+      const life = t - b.t0; let alpha = life < .7 ? life / .7 : 1, age = life, ghostOnly = false;
       if (t >= b.t1) {
         const f = t - b.t1;
         if (f < 1.1) { alpha *= 1 - f / 1.1; age = b.t1 - b.t0 + f * 2.2; }
         else if (ghost) { alpha = .09; age = b.t1 - b.t0 + 2.4; ghostOnly = true; }
         else if (b !== sel) continue;
-        else { alpha = .0; }
+        else alpha = 0;
       }
       const live = !ghostOnly && alpha > .02;
       alpha *= b.fa;
-      const bx = baseX(b.x) + Math.sin(clock * .9 + b.hash * 6.28) * 1.1;
-      const by = baseY(Math.min(age, MAX_AGE + 2)) + Math.sin(clock * .7 + b.h2 * 6.28) * .9;
-      const sx = toSX(bx), sy = toSY(by);
-      const r = R * b.rv * (.75 + .25 * Math.min(1, (t - b.t0) / .7));
+      // gentle sway driven by the timeline (so a paused sky is perfectly still and costs nothing)
+      const sw = Math.sin(t * 5.1 + b.hash * tau) * 1.1;
+      const sx = (bxOff + b.x * bxK + sw) * z + tx;
+      const sy = (GY - (age > MAX_AGE + 2 ? MAX_AGE + 2 : age) * PPY) * z + ty;
+      const r = R * b.rv * (life < .7 ? .75 + .25 * life / .7 : 1);
       px[i] = sx; py[i] = sy; pr[i] = r;
-      if (live && b.pass) { aloft++; gc[b.gi] = (gc[b.gi] || 0) + 1; const k = catFn(b); cc[k] = (cc[k] || 0) + 1; }
+      if (live && b.pass) { aloft++; if (b.gi >= 0) gc[b.gi]++; cc[b.ci]++; }
       if (sx < -30 || sx > W + 30 || sy < -40 || sy > H + 60) continue;
       if (alpha < .01) continue;
       pvis[i] = (b.pass && live) ? 1 : 0;
-      if (b === sel) { selDraw = [b, sx, sy, r, Math.max(alpha, .6)]; continue; }
-      if (i === hoverIdx) { hovDraw = [b, sx, sy, r, alpha]; continue; }
+      if (b === sel) { selDraw = [b, sx, sy, r]; continue; }
+      if (i === hoverIdx) { hovDraw = [b, sx, sy, r]; continue; }
       draw(b, sx, sy, r, alpha);
     }
-    if (hovDraw) { const [b, sx, sy, r, a] = hovDraw; ring(sx, sy - r * 1.6, r * 1.9, 'rgba(255,255,255,.35)', 1.2); draw(b, sx, sy, r * 1.4, 1); }
+    if (hovDraw) { const [b, sx, sy, r] = hovDraw; ring(sx, sy - r * 1.6, r * 1.9, 'rgba(255,255,255,.35)', 1.2); draw(b, sx, sy, r * 1.4, 1); }
     if (selDraw) { const [b, sx, sy, r] = selDraw; beacon(sx, sy, r); draw(b, sx, sy, r * 1.55, 1); }
-    counts = { groups: gc, cats: cc, aloft };
-    drawAxis(t);
-    if (A.ui) A.ui.frame(t, counts);
-    requestAnimationFrame(render);
+    // live per-group counts
+    g.save(); g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = '11px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.55)';
+    for (const [i, x, y] of labelPos) g.fillText(A.int(gc[i]) + ' aloft', x, y);
+    g.restore();
+    counts.aloft = aloft; counts.groups = gc; counts.catKeys = catKeys; counts.cc = cc;
+    const ms = performance.now() - tStart; A.perf.ms = A.perf.ms * .9 + ms * .1;
+    if (A.ui) A.ui.frame(t, counts, !busy);
   }
 
   function draw(b, sx, sy, r, alpha) {
     if (r < 1.7) { g.globalAlpha = alpha; g.fillStyle = b.col; g.fillRect(sx - r, sy - r * 2, r * 2, r * 2.4); g.globalAlpha = 1; return; }
-    const dw = r * 2.7, dh = dw * 84 / 64;
-    g.globalAlpha = alpha;
-    g.drawImage(A.sprite(b.col, b.shp === 'Racer' || b.shp === 'Special shape' ? b.shp : 'Round'), sx - dw / 2, sy - dh, dw, dh);
-    g.globalAlpha = 1;
+    const dw = r * 2.7, need = dw * dpr * .95, T = A.TIER_W;
+    const sp = b.sp[need <= T[0] ? 0 : need <= T[1] ? 1 : need <= T[2] ? 2 : 3];
+    if (alpha < .99) g.globalAlpha = alpha;
+    g.drawImage(sp, sx - dw / 2, sy - dw * 1.3125, dw, dw * 1.3125);
+    if (alpha < .99) g.globalAlpha = 1;
   }
   function ring(x, y, rad, col, w) { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(x, y, rad, 0, 6.3); g.stroke(); }
   function beacon(sx, sy, r) {
@@ -252,9 +263,7 @@ A.Sky = (function () {
         return;
       }
       if (e.pointerType === 'touch') return;
-      const i = pick(mx, my);
-      if (i !== hoverIdx) { hoverIdx = i; cv.classList.toggle('hover', i >= 0); dirty = true; }
-      if (i >= 0) A.ui.showTip(order[i], mx, my); else A.ui.hideTip();
+      hoverReq = [mx, my];
     });
     const up = e => {
       ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null;
@@ -265,7 +274,7 @@ A.Sky = (function () {
       }
     };
     cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-    cv.addEventListener('pointerleave', () => { hoverIdx = -1; A.ui.hideTip(); cv.classList.remove('hover'); });
+    cv.addEventListener('pointerleave', () => { hoverReq = null; hoverIdx = -1; A.ui.hideTip(); cv.classList.remove('hover'); dirty = true; });
     cv.addEventListener('wheel', e => { e.preventDefault(); const r = rect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * .0015)); }, { passive: false });
     cv.addEventListener('dblclick', e => { const r = rect(); zoomAt(e.clientX - r.left, e.clientY - r.top, 1.9); });
     new ResizeObserver(resize).observe(cv);

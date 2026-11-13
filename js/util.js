@@ -103,11 +103,11 @@ A.fmtVolShort = v => v >= 1000 ? Math.round(v / 1000) + 'k' : String(v);
 
 /* ---------- balloon sprite (canvas) ---------- */
 A.spriteCache = new Map();
-A.sprite = function (color, shape = 'Round') {
-  const key = color + shape;
+A.sprite = function (color, shape = 'Round', scale = 1) {
+  const key = color + shape + scale;
   let c = A.spriteCache.get(key); if (c) return c;
-  const W = 64, H = 84; c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d');
+  const W = 64, H = 84; c = document.createElement('canvas'); c.width = Math.round(W * scale); c.height = Math.round(H * scale);
+  const g = c.getContext('2d'); g.scale(scale, scale);
   const w = shape === 'Racer' ? 15 : shape === 'Special shape' ? 28 : 25;      // half-width
   const cx = W / 2, top = 3, bot = 58;
   const path = () => { g.beginPath(); g.moveTo(cx, top);
@@ -144,3 +144,9 @@ A.balloonSVG = (color, shape = 'Round') => {
 };
 
 A.colorOf = b => { const m = A.MODES[A.S.colorBy]; return m.colors[m.cat(b)] || A.UNK; };
+
+/* Pre-rendered size tiers: each balloon is drawn from the tier nearest its on-screen size, so we never
+   downscale a big bitmap thousands of times per frame (that was the main source of jank). */
+A.TIER_SCALE = [.375, .5625, .9375, 1.5625];
+A.TIER_W = A.TIER_SCALE.map(s => 64 * s);
+A.tiers = (color, shape) => A.TIER_SCALE.map(s => A.sprite(color, shape, s));

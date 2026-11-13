@@ -5,17 +5,16 @@
     filters: { inSvc: true, outSvc: true, ghost: false, szMin: 0, szMax: 1e9, cats: new Set(), model: null, fam: null, query: '' } });
 
   const $ = A.$, esc = A.esc;
-  let lastDom = 0, lastYearShown = null;
+  let lastDom = 0, lastYearShown = null, lastYearVal = '', lastAloft = -1, lastTipId = null;
 
   A.ui = {
-    frame(t, counts) {
+    frame(t, counts, settled) {
       const now = performance.now();
-      if (now - lastDom < 120) return; lastDom = now;
+      if (!settled && now - lastDom < 120) return; lastDom = now;
       const yr = Math.floor(t);
-      if (yr !== lastYearShown) { $('#yearNum').textContent = yr; lastYearShown = yr; $('#year').value = t; }
-      else if (!S.playing) $('#year').value = t; else $('#year').value = t;
-      $('#aloftN').textContent = A.int(counts.aloft);
-      $('#yearSub').textContent = A.int(counts.aloft) + ' balloons aloft';
+      if (yr !== lastYearShown) { $('#yearNum').textContent = yr; lastYearShown = yr; }
+      const yv = t.toFixed(2); if (yv !== lastYearVal) { $('#year').value = t; lastYearVal = yv; }
+      if (counts.aloft !== lastAloft) { lastAloft = counts.aloft; $('#aloftN').textContent = A.int(counts.aloft); $('#yearSub').textContent = A.int(counts.aloft) + ' balloons aloft'; }
       drawHist(t);
       updateLegendCounts(counts);
     },
@@ -24,13 +23,13 @@
       if (p && S.t >= A.meta.now + .9) S.t = A.meta.built[0];
     },
     showTip(b, x, y) {
-      const tip = $('#tooltip'); const col = A.colorOf(b);
-      tip.innerHTML = `<b>${esc(A.label(b))}</b><span>${esc(b.mfr || '')} ${esc(b.model || '')}${b.built ? ' · ' + b.built : ''}</span><br><span>${b.size ? A.int(b.size) + ' cu ft' : ''}${b.loc ? (b.size ? ' · ' : '') + esc(b.loc) : ''}</span>`;
+      const tip = $('#tooltip');
+      if (lastTipId !== b.id) { lastTipId = b.id; tip.innerHTML = `<b>${esc(A.label(b))}</b><span>${esc(b.mfr || '')} ${esc(b.model || '')}${b.built ? ' · ' + b.built : ''}</span><br><span>${b.size ? A.int(b.size) + ' cu ft' : ''}${b.loc ? (b.size ? ' · ' : '') + esc(b.loc) : ''}</span>`; }
       tip.hidden = false;
       const w = tip.offsetWidth, h = tip.offsetHeight, host = $('#sky').getBoundingClientRect();
       tip.style.left = Math.min(x + 16, host.width - w - 8) + 'px'; tip.style.top = Math.max(8, y - h - 14) + 'px';
     },
-    hideTip() { $('#tooltip').hidden = true; },
+    hideTip() { $('#tooltip').hidden = true; lastTipId = null; },
     select(id, opt = {}) {
       const b = id ? A.byId.get(id) : null;
       S.sel = b;
@@ -72,7 +71,7 @@
   function updateLegendCounts(counts) {
     const c = S.filters.cats;
     A.$$('#legend button').forEach(btn => {
-      const k = btn.dataset.k; btn.querySelector('em').textContent = A.int(counts.cats[k] || 0);
+      const k = btn.dataset.k, ix = counts.catKeys.indexOf(k), n = ix >= 0 ? counts.cc[ix] : 0, em = btn.querySelector('em'), txt = A.int(n); if (em.textContent !== txt) em.textContent = txt;
       btn.classList.toggle('on', c.has(k)); btn.classList.toggle('dim', c.size > 0 && !c.has(k));
     });
   }
@@ -113,20 +112,26 @@
   }
 
   /* ---------- timeline ---------- */
-  let hist;
+  let hist, histKey = '', histBase, histFill;
   function drawHist(t) {
     const cv = $('#histCanvas'), r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
     if (!r.width) return;
     if (cv.width !== Math.round(r.width * dpr)) { cv.width = r.width * dpr; cv.height = r.height * dpr; }
-    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, r.width, r.height);
     const y0 = A.meta.built[0], y1 = A.meta.now, mx = Math.max(...A.hist), w = r.width - 16, h = r.height - 22;
     const X = y => 8 + (y - y0) / (y1 + 1 - y0) * w;
-    const path = () => { g.beginPath(); g.moveTo(X(y0), h); A.years.forEach((y, i) => g.lineTo(X(y + .5), h - A.hist[i] / mx * (h - 4))); g.lineTo(X(y1 + .5), h); g.closePath(); };
-    path(); const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, 'rgba(255,180,84,.55)'); gr.addColorStop(1, 'rgba(255,180,84,.05)'); g.fillStyle = gr; g.fill();
-    g.save(); g.beginPath(); g.rect(0, 0, X(t), r.height); g.clip(); path(); g.fillStyle = 'rgba(255,180,84,.9)'; g.fill(); g.restore();
-    g.font = '10.5px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.5)'; g.textAlign = 'center';
-    for (const y of [1970, 1980, 1990, 2000, 2010, 2020]) g.fillText(y, X(y), r.height - 2);
-    g.textAlign = 'left'; g.fillStyle = 'rgba(255,255,255,.45)'; g.fillText('peak ' + A.int(mx) + ' aloft', X(A.years[A.hist.indexOf(mx)]) - 30, 10);
+    const key = r.width + 'x' + r.height + '@' + dpr;
+    if (key !== histKey) {                              // static layers are drawn once per size, then only blitted
+      histKey = key;
+      const mk = fn => { const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height; const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); fn(x); return c; };
+      const path = x => { x.beginPath(); x.moveTo(X(y0), h); A.years.forEach((y, i) => x.lineTo(X(y + .5), h - A.hist[i] / mx * (h - 4))); x.lineTo(X(y1 + .5), h); x.closePath(); };
+      histBase = mk(x => { path(x); const gr = x.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, 'rgba(255,180,84,.55)'); gr.addColorStop(1, 'rgba(255,180,84,.05)'); x.fillStyle = gr; x.fill();
+        x.font = '10.5px "DM Sans",sans-serif'; x.fillStyle = 'rgba(255,255,255,.5)'; x.textAlign = 'center'; for (const y of [1970, 1980, 1990, 2000, 2010, 2020]) x.fillText(y, X(y), r.height - 2);
+        x.textAlign = 'left'; x.fillStyle = 'rgba(255,255,255,.45)'; x.fillText('peak ' + A.int(mx) + ' aloft', X(A.years[A.hist.indexOf(mx)]) - 30, 10); });
+      histFill = mk(x => { path(x); x.fillStyle = 'rgba(255,180,84,.9)'; x.fill(); });
+    }
+    const g = cv.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cv.width, cv.height);
+    g.drawImage(histBase, 0, 0);
+    const cw = Math.max(0, Math.min(cv.width, X(t) * dpr)); if (cw > 0) g.drawImage(histFill, 0, 0, cw, cv.height, 0, 0, cw, cv.height);
   }
   function bindTimeline() {
     $('#play').onclick = () => A.ui.setPlaying(!S.playing);

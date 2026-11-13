@@ -1,7 +1,7 @@
 :root{
   --ink:#f5efe6; --ink2:#c8c3d8; --ink3:#8e8aa8;
   --night:#090c27; --dusk:#262669; --glow:#ffb454; --rose:#ff7a6b;
-  --panel:rgba(14,16,44,.9); --line:rgba(255,255,255,.12); --line2:rgba(255,255,255,.2);
+  --panel:rgba(16,14,48,.94); --line:rgba(255,255,255,.12); --line2:rgba(255,255,255,.2);
   --serif:'Fraunces',Georgia,serif; --sans:'DM Sans',system-ui,-apple-system,Segoe UI,sans-serif;
   --r:12px;
 }
@@ -48,28 +48,28 @@ input{font:inherit;color:inherit}
 .hud-tl{top:12px;left:12px;flex-direction:column;align-items:flex-start;max-width:calc(100% - 100px)}
 .hud-tr{top:12px;right:12px}
 .hud-bl{left:12px;bottom:12px;max-width:calc(100% - 24px)}
-.seg{display:flex;align-items:center;gap:2px;background:var(--panel);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:999px;padding:3px;flex-wrap:wrap}
+.seg{display:flex;align-items:center;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px;flex-wrap:wrap}
 .seg-label{padding:0 8px 0 10px;font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink3)}
 .seg button{padding:4px 11px;border-radius:999px;color:var(--ink2);font-size:13px;transition:.15s}
 .seg button:hover{color:var(--ink)}
 .seg button.on{background:rgba(255,255,255,.16);color:var(--ink)}
-.zoom{display:flex;flex-direction:column;background:var(--panel);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.zoom{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .zoom button{width:32px;height:32px;font-size:17px;color:var(--ink2)}
 .zoom button:hover{background:rgba(255,255,255,.1);color:var(--ink)}
 
 #yearBig{position:absolute;right:16px;bottom:10px;text-align:right;pointer-events:none;z-index:4}
-#yearNum{font-family:var(--serif);font-weight:700;font-size:clamp(54px,9vw,104px);line-height:.9;color:rgba(255,255,255,.92);letter-spacing:-.02em;text-shadow:0 4px 40px rgba(255,150,80,.35);font-variant-numeric:tabular-nums}
+#yearNum{font-family:var(--serif);font-weight:700;font-size:clamp(54px,9vw,104px);line-height:.9;color:rgba(255,255,255,.92);letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 #yearSub{display:block;font-size:12px;color:rgba(255,255,255,.55);margin-top:4px;letter-spacing:.04em}
 
 #legend{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-#legend button{display:flex;align-items:center;gap:6px;padding:4px 10px 4px 8px;border-radius:999px;background:var(--panel);backdrop-filter:blur(10px);border:1px solid var(--line);font-size:12px;color:var(--ink2);transition:.15s}
+#legend button{display:flex;align-items:center;gap:6px;padding:4px 10px 4px 8px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:12px;color:var(--ink2);transition:.15s}
 #legend button i{width:10px;height:10px;border-radius:50%}
 #legend button em{font-style:normal;color:var(--ink3);font-variant-numeric:tabular-nums}
 #legend button:hover{border-color:var(--line2);color:var(--ink)}
 #legend button.on{border-color:var(--glow);color:var(--ink);background:rgba(255,180,84,.14)}
 #legend button.dim{opacity:.4}
 
-#filterDock{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel);backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:999px;padding:6px 16px;font-size:12.5px}
+#filterDock{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 16px;font-size:12.5px}
 .chk{display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--ink2)}
 .chk input{position:absolute;opacity:0}
 .chk i{width:15px;height:15px;border-radius:4px;border:1.5px solid var(--ink3);display:grid;place-items:center;flex:none;transition:.15s}
@@ -99,7 +99,7 @@ input{font:inherit;color:inherit}
 .play svg{width:22px;height:22px;fill:currentColor}
 .play .ic-pause{display:none}
 .play.on .ic-pause{display:block}.play.on .ic-play{display:none}
-.play.on{animation:pulse 2s infinite}
+.play.on{box-shadow:0 0 0 6px rgba(255,180,84,.25)}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,180,84,.45)}100%{box-shadow:0 0 0 14px rgba(255,180,84,0)}}
 .speed{display:flex;background:rgba(255,255,255,.06);border-radius:999px;padding:2px}
 .speed button{padding:4px 9px;border-radius:999px;font-size:12px;color:var(--ink2)}
@@ -213,7 +213,7 @@ svg.chart .peer{fill:var(--ink);opacity:.4}
 .lin-tip{position:fixed;pointer-events:none;z-index:50;background:rgba(10,12,36,.96);border:1px solid var(--line2);border-radius:9px;padding:6px 10px;font-size:12px}
 
 /* modal */
-.modal{position:absolute;inset:0;z-index:40;background:rgba(5,6,22,.7);backdrop-filter:blur(6px);display:grid;place-items:center;padding:20px}
+.modal{position:absolute;inset:0;z-index:40;background:rgba(5,6,22,.7);display:grid;place-items:center;padding:20px}
 .modal[hidden]{display:none}
 .modal .sheet{max-width:560px;max-height:100%;overflow:auto;background:#12153d;border:1px solid var(--line2);border-radius:18px;padding:24px 26px;line-height:1.55;color:var(--ink2)}
 .modal h2{font-family:var(--serif);font-size:24px;color:var(--ink);margin-bottom:8px}
@@ -285,3 +285,12 @@ svg.chart .peer{fill:var(--ink);opacity:.4}
 #app{grid-template-columns:minmax(0,1fr)}
 #legendBar,#timeline,#stage,.tl-row,.scrub{min-width:0}
 .kpi dt{white-space:nowrap}@media (max-width:760px){.kpi dt{letter-spacing:.06em;font-size:9.5px}.kpi>div{padding-left:8px}}
+
+/* top-right: reserve a column for the year so it never sits under the controls */
+#yearBig{top:10px;right:64px;width:210px}
+.hud-tl{max-width:calc(100% - 290px)}
+#yearNum{font-size:clamp(44px,5vw,66px)}
+#yearSub{font-size:11px}
+#stage canvas,#skyCanvas{will-change:contents}
+@media (max-width:1100px){.hud-tl{max-width:calc(100% - 270px)}}
+@media (max-width:760px){#yearBig{top:auto;bottom:6px;right:10px;width:auto}.hud-tl{max-width:calc(100% - 56px)}}
