@@ -121,7 +121,6 @@ A.sprite = function (color, shape = 'Round') {
   g.save(); path(); g.clip();
   g.strokeStyle = 'rgba(255,255,255,.10)'; g.lineWidth = 2.2;
   for (const k of [-.5, 0, .5]) { g.beginPath(); g.moveTo(cx, top); g.bezierCurveTo(cx + w * k * 2.4, 22, cx + w * k * 1.8, 40, cx + 8 * k * 2, bot); g.stroke(); }
-  if (shape === 'Special shape') { g.fillStyle = 'rgba(255,255,255,.9)'; g.beginPath(); g.arc(cx, 26, 6, 0, 6.3); g.fill(); }
   g.restore();
   g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(cx - 9, bot, 18, 4);
   g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1.4;
