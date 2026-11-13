@@ -2,21 +2,23 @@
    Rendering is split into four stacked canvases so each frame only touches what actually changed:
      bg     sky + stars          drawn once per resize, never again
      scene  rules, hills, names  redrawn only when the camera or layout changes (cheap, no balloons)
-     gl     every balloon        ONE instanced WebGL draw call; position, fade and size are computed on the GPU
-                                  from the current year, so the CPU sends a handful of numbers per frame
+     gl     every balloon        tier 1/2: ONE instanced WebGL draw call (GPU computes position/fade/size from the year)
+                                  tier 3 (no WebGL, e.g. some embedded browsers): Canvas2D with a cached layer of every
+                                  in-service balloon that is simply scrolled, plus live draws for the few that retire
      fx     hover ring, beacon, per-group counts   tiny 2D overlay; also receives all pointer input */
 A.Sky = (function () {
   const S = A.S;
   let cv, g, bgc, sc, sg, glc, gl, W = 0, H = 0, dpr = 1;
   const cam = { zoom: 1, tx: 0, ty: 0, tz: 1, ttx: 0, tty: 0, flying: false };
-  const PAD = 18, MAX_AGE = 63, STRIDE = 8, SHAPES = ['Round', 'Racer', 'Special shape'];
+  const PAD = 18, MAX_AGE = 63, STRIDE = 12, LM = 80, SHAPES = ['Round', 'Racer', 'Special shape'];
   let GY = 0, PPY = 1, stars = [];
   let groups = [], layoutT = 1, mixE = 1, layoutStart = 0, groupsVer = 0;
   let order = [], N = 0, inst = null;
   let hoverIdx = -1, hoverReq = null, dragging = null, camReq = null, last = 0, dirty = true;
   let catKeys = [], gc = new Int32Array(0), cc = new Int32Array(0), lastCount = 0, labelCache = null;
   let counts = { groups: gc, catKeys, cc, aloft: 0 };
-  let fadeT = 1, fadeStart = 0, atlasMode = '', glOK = false;
+  A.perf = { backend: 'none' };
+  let fadeT = 1, fadeStart = 0, atlasMode = '', glOK = false, backend = 'none', ext = null, gx = null, layer = null, layerDirty = true, outList = [], inList = [];
   const P = { x: 0, y: 0, r: 0, alive: true };          // scratch result of geom()
 
   /* ============ layout (x positions) ============ */
@@ -41,7 +43,7 @@ A.Sky = (function () {
     }
     gc = new Int32Array(groups.length); groupsVer++; labelCache = null;
     if (!animate) { for (const b of A.B) b.xs = b.xt; layoutT = 1; mixE = 1; } else { layoutT = 0; mixE = 0; layoutStart = performance.now(); }
-    writeInstances(); dirty = true;
+    writeInstances(); layerDirty = true; dirty = true;
   }
 
   /* ============ filters / colors ============ */
@@ -66,15 +68,19 @@ A.Sky = (function () {
     // GPU fade between the previous and new filter state (computed on the GPU, driven by one uniform)
     for (const b of order) { const to = b.pass ? 1 : .05; b.faFrom = b.faTo === undefined ? to : A.lerp(b.faFrom, b.faTo, fadeT); b.faTo = to; }
     fadeT = 0; fadeStart = performance.now();
-    if (glOK) { if (atlasMode !== S.colorBy) buildAtlas(); writeInstances(); }
+    if (backend === '2d') {
+      const tc = new Map();
+      for (const b of A.B) { const sh = b.shp === 'Racer' || b.shp === 'Special shape' ? b.shp : 'Round', k = b.col + sh; b.sp = tc.get(k) || (tc.set(k, A.tiers(b.col, sh)), tc.get(k)); }
+      layerDirty = true;
+    } else if (glOK) { if (atlasMode !== S.colorBy) buildAtlas(); writeInstances(); }
     dirty = true;
   }
 
   /* ============ geometry ============ */
   function resize() {
     const r = cv.getBoundingClientRect(); if (r.width < 2 || r.height < 2) { W = H = 0; return; }
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    W = r.width; H = r.height;
+    dpr = Math.min(window.devicePixelRatio || 1, backend === '2d' ? 1.5 : 2);
+    W = r.width; H = r.height; layerDirty = true;
     for (const c of [bgc, sc, glc, cv]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
     GY = H - 40; PPY = (GY - 36) / MAX_AGE;
     stars = Array.from({ length: 140 }, (_, i) => ({ x: A.hash('sx' + i) * W, y: A.hash('sy' + i) * H * .55, r: .4 + A.hash('sr' + i) * 1.1, p: A.hash('sp' + i) * 6.28 }));
@@ -168,21 +174,20 @@ A.Sky = (function () {
   }
   function ring(x, y, rad, col, w) { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.arc(x, y, rad, 0, 6.3); g.stroke(); }
 
-  /* ============ WebGL: instanced balloons ============ */
-  const VS = `#version 300 es
-precision highp float;
-layout(location=0) in vec2 aq;
-layout(location=1) in vec4 aA;   // xFrom, xTo, t0, t1
-layout(location=2) in vec4 aB;   // sizeScale, atlasCell, fadeFrom, fadeTo
+  /* ============ WebGL (tiers 1-2): instanced balloons ============ */
+  const VS_BODY = `
+attribute vec2 aq;
+attribute vec4 aA;   // xFrom, xTo, t0, t1
+attribute vec4 aB;   // sizeScale, atlasCell, fadeFrom, fadeTo
+attribute vec4 aC;   // x = instance index
 uniform vec2 uRes, uCam, uAtlas, uCellPx, uSpritePx;
-uniform float uT, uMix, uZoom, uPad, uGY, uPPY, uR, uMaxAge, uFade, uGhost, uPadPx, uCols;
-uniform int uMode, uSel, uHov;
-out vec2 vUV; out float vA;
+uniform float uT, uMix, uZoom, uPad, uGY, uPPY, uR, uMaxAge, uFade, uGhost, uPadPx, uCols, uMode, uSel, uHov;
+varying vec2 vUV; varying float vA;
 void main() {
   vA = 0.0; vUV = vec2(0.0); gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-  bool isSel = gl_InstanceID == uSel, isHov = gl_InstanceID == uHov;
-  if (uMode == 0 && (isSel || isHov)) return;           // pass 1: everyone except the highlighted
-  if (uMode == 1 && !(isSel || isHov)) return;          // pass 2: only the highlighted, drawn on top and larger
+  bool isSel = abs(aC.x - uSel) < 0.5, isHov = abs(aC.x - uHov) < 0.5;
+  if (uMode < 0.5 && (isSel || isHov)) return;           // pass 1: everyone except the highlighted
+  if (uMode > 0.5 && !(isSel || isHov)) return;          // pass 2: only the highlighted, on top and larger
   float t0 = aA.z, t1 = aA.w, life = uT - t0;
   if (life < 0.0) return;
   float alpha = 1.0, sc = 1.0, age = life;
@@ -191,59 +196,67 @@ void main() {
     float f = uT - t1;
     if (f < 1.1) { alpha *= 1.0 - f / 1.1; age = t1 - t0 + f * 2.2; }
     else if (uGhost > 0.5) { alpha = 0.09; age = t1 - t0 + 2.4; }
-    else if (uMode == 1 && isSel) { alpha = 1.0; age = t1 - t0 + 2.4; }
+    else if (uMode > 0.5 && isSel) { alpha = 1.0; age = t1 - t0 + 2.4; }
     else return;
   }
   alpha *= mix(aB.z, aB.w, uFade);
   float boost = 1.0;
-  if (uMode == 1) { boost = isSel ? 1.55 : 1.4; alpha = 1.0; }
+  if (uMode > 0.5) { boost = isSel ? 1.55 : 1.4; alpha = 1.0; }
   float x = mix(aA.x, aA.y, uMix);
   vec2 c = vec2(uPad + x * (uRes.x - 2.0 * uPad), uGY - min(age, uMaxAge + 2.0) * uPPY) * uZoom + uCam;
   float dw = uR * aB.x * sc * boost * 2.7, dh = dw * 1.3125;
+  if (c.x < -dw || c.x > uRes.x + dw || c.y < -dh * 0.5 || c.y > uRes.y + dh * 1.5) return;   // cull on the shared center
   vec2 p = vec2(c.x + (aq.x - 0.5) * dw, c.y - (1.0 - aq.y) * dh);
-  if (c.x < -dw || c.x > uRes.x + dw || c.y < -dh * 0.5 || c.y > uRes.y + dh * 1.5) return;   // cull on the shared center so a quad is never half-culled
   gl_Position = vec4(p.x / uRes.x * 2.0 - 1.0, 1.0 - p.y / uRes.y * 2.0, 0.0, 1.0);
   float cell = aB.y, col = mod(cell, uCols), row = floor(cell / uCols);
   vUV = (vec2(col, row) * uCellPx + vec2(uPadPx) + aq * uSpritePx) / uAtlas;
   vA = alpha;
 }`;
-  const FS = `#version 300 es
-precision mediump float;
-in vec2 vUV; in float vA; uniform sampler2D uTex; out vec4 o;
-void main() { o = texture(uTex, vUV) * vA; }`;
+  const FS_BODY = `
+varying vec2 vUV; varying float vA; uniform sampler2D uTex;
+void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
   const U = {}; let atlasTex, instBuf;
-  const CELL_W = 112, CELL_H = 142, CELL_OFF = 8, SPR_W = 96, SPR_H = 126, COLS = 8;
+  const CELL_W = 112, CELL_H = 142, CELL_OFF = 8, SPR_W = 96, SPR_H = 126, COLS = 8, ATLAS = 1024;   // power-of-two atlas: mipmaps work on WebGL1 too
 
   function initGL() {
-    gl = glc.getContext('webgl2', { alpha: true, premultipliedAlpha: true, antialias: false, powerPreference: 'high-performance' });
-    if (!gl) { glOK = false; return false; }
-    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
-    const prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog);
+    const attrs = { alpha: true, premultipliedAlpha: true, antialias: false, powerPreference: 'high-performance', failIfMajorPerformanceCaveat: true };   // refuse slow software GL; Canvas2D tier is faster then
+    const force = new URLSearchParams(location.search).get('renderer');      // ?renderer=2d | webgl1 | webgl2 (testing)
+    if (force === '2d') return false;
+    let v2 = true;
+    gl = force === 'webgl1' ? null : glc.getContext('webgl2', attrs);
+    if (!gl) { v2 = false; gl = glc.getContext('webgl', attrs) || glc.getContext('experimental-webgl', attrs); }
+    if (!gl) return false;
+    if (!v2) { ext = gl.getExtension('ANGLE_instanced_arrays'); if (!ext) { gl = null; return false; } }
+    const sh = (type, src) => { const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x; };
+    const vsHead = v2 ? '#version 300 es\n#define attribute in\n#define varying out\nprecision highp float;\n' : 'precision highp float;\n';
+    const fsHead = v2 ? '#version 300 es\nprecision mediump float;\n#define varying in\n#define texture2D texture\nout vec4 oColor;\n#define FRAG oColor\n' : 'precision mediump float;\n#define FRAG gl_FragColor\n';
+    const prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, vsHead + VS_BODY)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fsHead + FS_BODY));
+    gl.bindAttribLocation(prog, 0, 'aq'); gl.bindAttribLocation(prog, 1, 'aA'); gl.bindAttribLocation(prog, 2, 'aB'); gl.bindAttribLocation(prog, 3, 'aC');
+    gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     gl.useProgram(prog);
     for (const n of ['uRes', 'uCam', 'uAtlas', 'uCellPx', 'uSpritePx', 'uT', 'uMix', 'uZoom', 'uPad', 'uGY', 'uPPY', 'uR', 'uMaxAge', 'uFade', 'uGhost', 'uPadPx', 'uCols', 'uMode', 'uSel', 'uHov', 'uTex']) U[n] = gl.getUniformLocation(prog, n);
-    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    if (v2) gl.bindVertexArray(gl.createVertexArray());
+    const div = (loc, d) => v2 ? gl.vertexAttribDivisor(loc, d) : ext.vertexAttribDivisorANGLE(loc, d);
     const q = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, q); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     instBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, STRIDE * 4, 0); gl.vertexAttribDivisor(1, 1);
-    gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 4, gl.FLOAT, false, STRIDE * 4, 16); gl.vertexAttribDivisor(2, 1);
+    for (const [loc, off] of [[1, 0], [2, 16], [3, 32]]) { gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 4, gl.FLOAT, false, STRIDE * 4, off); div(loc, 1); }
     atlasTex = gl.createTexture();
     gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.clearColor(0, 0, 0, 0);
-    glOK = true; return true;
+    glOK = true; backend = v2 ? 'webgl2' : 'webgl1'; return true;
   }
   /* sprite atlas: one cell per (category color x shape); mipmapped so the GPU does the downscaling */
   function buildAtlas() {
     const mode = A.MODES[S.colorBy], key = S.colorBy;
-    const cells = catKeys.length * SHAPES.length, rows = Math.ceil(cells / COLS);
-    const cvs = document.createElement('canvas'); cvs.width = COLS * CELL_W; cvs.height = rows * CELL_H; const x = cvs.getContext('2d');
+    const cvs = document.createElement('canvas'); cvs.width = ATLAS; cvs.height = ATLAS; const x = cvs.getContext('2d');
     catKeys.forEach((k, ci) => SHAPES.forEach((sh, si) => { const n = ci * SHAPES.length + si; x.drawImage(A.sprite(mode.colors[k] || A.UNK, sh, 1.5), (n % COLS) * CELL_W + CELL_OFF, Math.floor(n / COLS) * CELL_H + CELL_OFF); }));
     gl.bindTexture(gl.TEXTURE_2D, atlasTex);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cvs); gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.uniform2f(U.uAtlas, cvs.width, cvs.height); atlasMode = key;
+    gl.uniform2f(U.uAtlas, ATLAS, ATLAS); atlasMode = key;
   }
   /* per-balloon static data -> GPU. Only rewritten when layout / colors / filters change, never per frame. */
   function writeInstances() {
@@ -251,10 +264,11 @@ void main() { o = texture(uTex, vUV) * vA; }`;
     for (let i = 0; i < N; i++) {
       const b = order[i], o = i * STRIDE, si = b.shp === 'Racer' ? 1 : b.shp === 'Special shape' ? 2 : 0;
       inst[o] = b.xs; inst[o + 1] = b.xt; inst[o + 2] = b.t0; inst[o + 3] = b.t1 === Infinity ? 1e6 : b.t1;
-      inst[o + 4] = b.rv; inst[o + 5] = (b.ci || 0) * SHAPES.length + si; inst[o + 6] = b.faFrom ?? 1; inst[o + 7] = b.faTo ?? 1;
+      inst[o + 4] = b.rv; inst[o + 5] = (b.ci || 0) * SHAPES.length + si; inst[o + 6] = b.faFrom ?? 1; inst[o + 7] = b.faTo ?? 1; inst[o + 8] = i;
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, instBuf); gl.bufferData(gl.ARRAY_BUFFER, inst, gl.DYNAMIC_DRAW);
   }
+  const drawInst = () => backend === 'webgl2' ? gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, N) : ext.drawArraysInstancedANGLE(gl.TRIANGLE_STRIP, 0, 4, N);
   function drawGL(t) {
     gl.viewport(0, 0, glc.width, glc.height); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.uniform2f(U.uRes, W, H); gl.uniform2f(U.uCam, cam.tx, cam.ty);
@@ -263,10 +277,61 @@ void main() { o = texture(uTex, vUV) * vA; }`;
     gl.uniform1f(U.uPPY, PPY); gl.uniform1f(U.uR, 4.6 * Math.pow(cam.zoom, .55)); gl.uniform1f(U.uMaxAge, MAX_AGE); gl.uniform1f(U.uFade, A.ease(fadeT));
     gl.uniform1f(U.uGhost, S.filters.ghost ? 1 : 0); gl.uniform1f(U.uPadPx, CELL_OFF); gl.uniform1f(U.uCols, COLS);
     const selI = S.sel && S.sel.sky ? S.sel.oi : -1;
-    gl.uniform1i(U.uSel, selI); gl.uniform1i(U.uHov, hoverIdx);
+    gl.uniform1f(U.uSel, selI); gl.uniform1f(U.uHov, hoverIdx);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, atlasTex); gl.uniform1i(U.uTex, 0);
-    gl.uniform1i(U.uMode, 0); gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, N);
-    if (selI >= 0 || hoverIdx >= 0) { gl.uniform1i(U.uMode, 1); gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, N); }
+    gl.uniform1f(U.uMode, 0); drawInst();
+    if (selI >= 0 || hoverIdx >= 0) { gl.uniform1f(U.uMode, 1); drawInst(); }
+  }
+
+  /* ============ Canvas2D (tier 3): no GPU required ============
+     Every balloon rises at the same speed, so the whole in-service fleet (~4,900 balloons) is pre-drawn ONCE into
+     one tall layer and each frame is just a single scrolled blit. Only balloons that retire (~1,600 at peak) are drawn live.
+     When zoomed in, only the handful on screen are drawn individually. */
+  function pickTier(b, dw) { const need = dw * dpr * .95, T = A.TIER_W; return b.sp[need <= T[0] ? 0 : need <= T[1] ? 1 : need <= T[2] ? 2 : 3]; }
+  function paintLayer(cvs, list, keep) {
+    const T0 = A.meta.built[0], lw = Math.round((W + 2 * LM) * dpr), lh = Math.round((H + (A.meta.now + 1 - T0) * PPY + 2 * LM) * dpr);
+    if (cvs.width !== lw || cvs.height !== lh) { cvs.width = lw; cvs.height = lh; }
+    const c = cvs.getContext('2d'); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, lw, lh); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const b of list) {
+      if (keep && !keep(b)) continue;
+      const dw = 4.6 * b.rv * 2.7, dh = dw * 1.3125, x = LM + PAD + b.xt * (W - 2 * PAD), y = LM + GY + (b.t0 - T0) * PPY;
+      if (!b.pass) c.globalAlpha = .05;
+      c.drawImage(pickTier(b, dw), x - dw / 2, y - dh, dw, dh);
+      if (!b.pass) c.globalAlpha = 1;
+    }
+  }
+  let layerOut = null, layerOutYear = -1;
+  function buildLayer() { if (!layer) layer = document.createElement('canvas'); paintLayer(layer, inList); layerDirty = false; layerOutYear = -1; }
+  /* balloons that retire later than this year's end sit in a second cached layer, rebuilt once per calendar year */
+  function buildOutLayer(Y) { if (!layerOut) layerOut = document.createElement('canvas'); paintLayer(layerOut, outList, b => b.t1 >= Y + 1); layerOutYear = Y; }
+  function draw2D(t) {
+    gx.setTransform(1, 0, 0, 1, 0, 0); gx.clearRect(0, 0, glc.width, glc.height); gx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const useLayer = cam.zoom < 1.001 && mixE === 1, T0 = A.meta.built[0], Y = Math.floor(t);
+    if (useLayer) {
+      if (layerDirty) buildLayer();
+      if (layerOutYear !== Y) buildOutLayer(Y);
+      const groundY = cam.ty + GY + 4, dh = Math.max(1, Math.min(H, groundY)), x0 = LM - cam.tx, y0 = (t - T0) * PPY - cam.ty + LM;
+      gx.drawImage(layer, x0 * dpr, y0 * dpr, W * dpr, dh * dpr, 0, 0, W, dh);      // every in-service balloon: one blit
+      gx.drawImage(layerOut, x0 * dpr, y0 * dpr, W * dpr, dh * dpr, 0, 0, W, dh);   // every balloon retiring after this year: one blit
+    }
+    const list = useLayer ? outList : order, ghost = S.filters.ghost, R = 4.6 * Math.pow(cam.zoom, .55), sel = S.sel;
+    for (let i = 0, n = list.length; i < n; i++) {
+      const b = list[i], life = t - b.t0; if (life < 0) continue;
+      if (useLayer && b.t1 >= Y + 1) continue;                                      // already in the cached layer
+      let alpha = life < .7 ? life / .7 : 1, age = life, sc2 = life < .7 ? .75 + .25 * life / .7 : 1;
+      if (t >= b.t1) { const f = t - b.t1; if (f < 1.1) { alpha *= 1 - f / 1.1; age = b.t1 - b.t0 + f * 2.2; } else if (ghost) { alpha = .09; age = b.t1 - b.t0 + 2.4; } else continue; }
+      if (b === sel || list === order && i === hoverIdx) continue;
+      alpha *= b.pass ? 1 : .05;
+      const sx = (PAD + curX(b) * (W - 2 * PAD)) * cam.zoom + cam.tx, sy = (GY - Math.min(age, MAX_AGE + 2) * PPY) * cam.zoom + cam.ty, dw = R * b.rv * sc2 * 2.7;
+      if (sx < -dw || sx > W + dw || sy < 0 || sy > H + dw * 1.3) continue;
+      if (alpha < .99) gx.globalAlpha = alpha;
+      gx.drawImage(pickTier(b, dw), sx - dw / 2, sy - dw * 1.3125, dw, dw * 1.3125);
+      if (alpha < .99) gx.globalAlpha = 1;
+    }
+    for (const [b, boost] of [[hoverIdx >= 0 ? order[hoverIdx] : null, 1.4], [sel && sel.sky ? sel : null, 1.55]]) {
+      if (!b || !geom(b, t)) continue;
+      const dw = P.r * boost * 2.7; gx.drawImage(pickTier(b, dw), P.x - dw / 2, P.y - dw * 1.3125, dw, dw * 1.3125);
+    }
   }
 
   /* ============ frame loop: do work only when something moved ============ */
@@ -284,7 +349,7 @@ void main() { o = texture(uTex, vUV) * vA; }`;
       S.t += dt * S.speed * 2; busy = true;
       if (S.t >= A.meta.now + .99) { S.t = A.meta.now + .99; A.ui.setPlaying(false); }
     }
-    if (layoutT < 1) { layoutT = Math.min(1, (now - layoutStart) / 900); mixE = A.ease(layoutT); busy = true; if (layoutT >= 1) { mixE = 1; } }
+    if (layoutT < 1) { layoutT = Math.min(1, (now - layoutStart) / 900); mixE = A.ease(layoutT); busy = true; if (layoutT >= 1) { mixE = 1; layerDirty = true; } }
     if (cam.flying) {
       const k = 1 - Math.pow(.0009, dt);
       cam.zoom += (cam.tz - cam.zoom) * k; cam.tx += (cam.ttx - cam.tx) * k; cam.ty += (cam.tty - cam.ty) * k;
@@ -298,11 +363,11 @@ void main() { o = texture(uTex, vUV) * vA; }`;
       if (i >= 0) A.ui.showTip(order[i], mx, my);
     }
     if (S.sel) busy = true;                                        // selection beacon pulses
-    if (!(dirty || busy) || document.hidden || W < 2 || H < 2 || !glOK) return;
+    if (!(dirty || busy) || document.hidden || W < 2 || H < 2 || backend === 'none') return;
     dirty = false;
     const t = S.t;
     drawScene();
-    drawGL(t);
+    if (backend === '2d') draw2D(t); else drawGL(t);
     if (now - lastCount > 120 || !busy) { computeCounts(t); lastCount = now; }
     drawFx(t);
     if (A.ui) A.ui.frame(t, counts, !busy);
@@ -355,9 +420,9 @@ void main() { o = texture(uTex, vUV) * vA; }`;
     cv.addEventListener('pointerleave', () => { hoverReq = null; hoverIdx = -1; A.ui.hideTip(); cv.classList.remove('hover'); dirty = true; });
     cv.addEventListener('wheel', e => { e.preventDefault(); const r = rect(), cx = e.clientX - r.left, cy = e.clientY - r.top, k = Math.exp(-e.deltaY * .0015); camReq = () => zoomAt(cx, cy, k); }, { passive: false });
     cv.addEventListener('dblclick', e => { const r = rect(); zoomAt(e.clientX - r.left, e.clientY - r.top, 1.9); });
-    new ResizeObserver(() => { resize(); if (glOK) dirty = true; }).observe(cv);
-    glc.addEventListener('webglcontextlost', e => { e.preventDefault(); glOK = false; });
-    glc.addEventListener('webglcontextrestored', () => { initGL(); buildAtlas(); writeInstances(); dirty = true; });
+    new ResizeObserver(() => { resize(); dirty = true; }).observe(cv);
+    glc.addEventListener('webglcontextlost', e => { e.preventDefault(); glOK = false; backend = 'none'; });
+    glc.addEventListener('webglcontextrestored', () => { try { initGL(); buildAtlas(); writeInstances(); } catch (e) {} dirty = true; });
   }
 
   return {
@@ -368,8 +433,12 @@ void main() { o = texture(uTex, vUV) * vA; }`;
       for (const b of A.B) { b.xs = b.xt = .5; b.oi = b.oi ?? -1; }
       order.forEach((b, i) => b.oi = i);
       inst = new Float32Array(N * STRIDE);
-      try { initGL(); } catch (e) { console.error(e); glOK = false; }
-      if (!glOK) { document.body.insertAdjacentHTML('beforeend', '<p style="position:fixed;inset:80px 20px auto;color:#fff;z-index:99">This view needs WebGL2, which this browser does not provide.</p>'); }
+      try { initGL(); } catch (e) {
+        console.warn('WebGL unavailable, using Canvas2D', e); glOK = false; gl = null;
+        const fresh = glc.cloneNode(false); glc.replaceWith(fresh); glc = fresh;      // a canvas that has tried GL can no longer give a 2D context
+      }
+      if (!glOK) { gx = glc.getContext('2d'); backend = gx ? '2d' : 'none'; inList = order.filter(b => b.t1 === Infinity); outList = order.filter(b => b.t1 !== Infinity); }
+      A.perf.backend = backend;
       resize(); bind(); computeLayout(S.arrange, false); applyFilters();
       requestAnimationFrame(render);
     },
