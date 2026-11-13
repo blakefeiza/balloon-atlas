@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Balloon Atlas</title>
+<meta name="description" content="An interactive atlas of 7,000+ hot air balloons: watch the fleet fly through time, open any balloon, trace model lineages.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" data-view="sky">
+
+  <header id="topbar">
+    <div class="brand"><svg viewBox="0 0 24 30" width="18" height="22" aria-hidden="true"><use href="#glyph"/></svg><span>Balloon Atlas</span></div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="sky" aria-selected="true">Sky</button>
+      <button role="tab" data-view="lineage" aria-selected="false">Lineage</button>
+    </nav>
+    <div class="search">
+      <input id="q" type="search" placeholder="Find a balloon, owner, registration…" autocomplete="off" spellcheck="false" aria-label="Search balloons">
+      <ul id="results" hidden></ul>
+    </div>
+    <button id="btnInfo" class="icon-btn" title="About this data" aria-label="About this data">i</button>
+  </header>
+
+  <main id="stage">
+    <!-- SKY -->
+    <section id="sky" class="view">
+      <canvas id="skyCanvas"></canvas>
+      <div id="axisLabels"></div>
+
+      <div class="hud hud-tl">
+        <div class="seg" id="arrangeSeg"><span class="seg-label">Arrange</span></div>
+        <div class="seg" id="colorSeg"><span class="seg-label">Color</span></div>
+        <div id="filterDock">
+        <label class="chk"><input type="checkbox" id="fIn" checked><i></i>In service</label>
+        <label class="chk"><input type="checkbox" id="fOut" checked><i></i>Retired</label>
+        <label class="chk"><input type="checkbox" id="fGhost"><i></i>Show retired as ghosts</label>
+        <div class="range" title="Envelope volume">
+          <span>Size</span><b id="szLabel">any</b>
+          <div class="dual"><input type="range" id="szMin" min="0" max="100" value="0"><input type="range" id="szMax" min="0" max="100" value="100"></div>
+        </div>
+        <button id="fClear" class="link" hidden>Clear filters</button>
+      </div>
+      </div>
+
+      <div class="hud hud-tr">
+        <div class="zoom">
+          <button id="zIn" aria-label="Zoom in">+</button>
+          <button id="zOut" aria-label="Zoom out">−</button>
+          <button id="zReset" aria-label="Reset view" title="Reset view">⌂</button>
+        </div>
+      </div>
+
+      <div id="yearBig" aria-live="off"><span id="yearNum">1963</span><small id="yearSub"></small></div>
+
+      
+
+      
+
+      <div id="tooltip" hidden></div>
+      <div id="isolateChip" hidden></div>
+    </section>
+
+    <!-- LINEAGE -->
+    <section id="lineage" class="view" hidden></section>
+
+    <!-- CARD -->
+    <aside id="card" class="card" hidden aria-label="Balloon details"></aside>
+
+    <!-- ABOUT -->
+    <div id="about" class="modal" hidden></div>
+  </main>
+
+  <footer id="timeline"><div id="legendBar"><div id="legend"></div></div>
+    <div class="tl-row">
+    <button id="play" class="play" aria-label="Play"><svg viewBox="0 0 24 24"><path class="ic-play" d="M8 5v14l11-7z"/><path class="ic-pause" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
+    <div class="speed" id="speed" role="group" aria-label="Speed">
+      <button data-s="1">1×</button><button data-s="2" class="on">2×</button><button data-s="4">4×</button>
+    </div>
+    <div class="scrub">
+      <canvas id="histCanvas"></canvas>
+      <input id="year" type="range" min="1963" max="2026.99" step="0.01" value="1963" aria-label="Year">
+    </div>
+    <div class="aloft"><b id="aloftN">0</b><span>aloft</span></div>
+  </div></footer>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="glyph" viewBox="0 0 24 30"><path d="M12 1C5.5 1 2 6 2 11c0 4.5 3 8 6 10.5h8C19 19 22 15.5 22 11 22 6 18.5 1 12 1z" fill="currentColor"/><rect x="9" y="23" width="6" height="5" rx="1" fill="currentColor" opacity=".7"/></symbol>
+</defs></svg>
+
+<script src="js/util.js"></script>
+<script src="js/sky.js"></script>
+<script src="js/card.js"></script>
+<script src="js/lineage.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
