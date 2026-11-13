@@ -291,6 +291,8 @@ svg.chart .peer{fill:var(--ink);opacity:.4}
 .hud-tl{max-width:calc(100% - 290px)}
 #yearNum{font-size:clamp(44px,5vw,66px)}
 #yearSub{font-size:11px}
-#stage canvas,#skyCanvas{will-change:contents}
 @media (max-width:1100px){.hud-tl{max-width:calc(100% - 270px)}}
 @media (max-width:760px){#yearBig{top:auto;bottom:6px;right:10px;width:auto}.hud-tl{max-width:calc(100% - 56px)}}
+
+.layer{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:block}
+#skyCanvas{will-change:auto}
