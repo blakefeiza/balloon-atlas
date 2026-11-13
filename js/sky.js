@@ -342,7 +342,7 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
   }
   function render(now) {
     requestAnimationFrame(render);
-    const dt = Math.min(.05, (now - last) / 1000 || 0); last = now;
+    const dtRaw = (now - last) / 1000 || 0, dt = Math.min(.05, dtRaw); last = now;
     let busy = false;
     if (camReq) { const c = camReq; camReq = null; c(); busy = true; }          // drag / pinch are applied once per frame, not once per event
     if (S.playing) {
@@ -363,6 +363,7 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
       if (i >= 0) A.ui.showTip(order[i], mx, my);
     }
     if (S.sel) busy = true;                                        // selection beacon pulses
+    if (busy && dtRaw > 0 && dtRaw < .5) A.perf.fps = (A.perf.fps || 60) * .92 + (1 / dtRaw) * .08;   // live frame rate, shown in the About panel
     if (!(dirty || busy) || document.hidden || W < 2 || H < 2 || backend === 'none') return;
     dirty = false;
     const t = S.t;
@@ -370,6 +371,7 @@ void main() { FRAG = texture2D(uTex, vUV) * vA; }`;
     if (backend === '2d') draw2D(t); else drawGL(t);
     if (now - lastCount > 120 || !busy) { computeCounts(t); lastCount = now; }
     drawFx(t);
+    A.perf.dpr = dpr; A.perf.size = glc.width + 'x' + glc.height;
     if (A.ui) A.ui.frame(t, counts, !busy);
   }
 

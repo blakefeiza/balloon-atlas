@@ -209,11 +209,21 @@
         <h4>What is measured</h4><p>Build year, rebuild years, envelope volume, maker, model, status (in service or out), owner history and event sightings come straight from the database.</p>
         <h4>What is modeled</h4><p><b>Retirement years.</b> The database says whether a balloon is out of service, not when it stopped. For the animation, each retired balloon gets a retirement year drawn from a Weibull survival curve fitted to how many balloons of each build year are still flying, and never earlier than its last sighting or rebuild. Those years are estimates and are labeled as such.</p>
         <h4>Caveats</h4><p>${A.int(A.B.filter(b => !b.sky).length)} balloons have no build year and cannot fly in the Sky (search still finds them). Owner order is as listed; transfer dates are not recorded. Old retired balloons are under-represented, because the database follows the surviving fleet.</p>
-        <p style="margin-top:12px;font-size:12px;color:var(--ink3)">Renderer: ${({webgl2:'WebGL 2',webgl1:'WebGL 1',['2d']:'Canvas 2D (no GPU needed)'})[A.perf.backend] || A.perf.backend}</p>
+        <p style="margin-top:12px;font-size:12px;color:var(--ink3)">Renderer: ${({webgl2:'WebGL 2',webgl1:'WebGL 1',['2d']:'Canvas 2D (no GPU needed)'})[A.perf.backend] || A.perf.backend} · ${A.perf.fps ? Math.round(A.perf.fps) + ' fps while animating' : 'press play to measure fps'} · canvas ${A.perf.size || '?'} @${A.perf.dpr || '?'}x · ${esc(navigator.userAgent.replace(/^Mozilla\/5.0 /,'').slice(0, 90))}${A.errors && A.errors.length ? '<br>Errors: ' + esc(A.errors.join(' | ')) : ''}</p>
         <div class="btnrow"><button class="btn primary" id="aboutX">Back to the sky</button></div></div>`;
       m.hidden = false; $('#aboutX').onclick = () => m.hidden = true; m.onclick = e => { if (e.target === m) m.hidden = true; };
     };
   }
+
+  /* ---------- visible error banner (embedded browsers hide the console) ---------- */
+  A.errors = [];
+  function showErr(msg) {
+    A.errors.push(msg); let b = document.getElementById('errBanner');
+    if (!b) { b = A.el('div', { id: 'errBanner' }); document.body.appendChild(b); }
+    b.textContent = 'Something went wrong: ' + A.errors.slice(-2).join(' | ');
+  }
+  addEventListener('error', e => showErr((e.message || 'error') + (e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '')));
+  addEventListener('unhandledrejection', e => showErr(String(e.reason && e.reason.message || e.reason)));
 
   /* ---------- boot ---------- */
   A.load().then(() => {
