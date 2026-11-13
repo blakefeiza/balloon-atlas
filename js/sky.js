@@ -82,10 +82,10 @@ A.Sky = (function () {
       bgCache = document.createElement('canvas'); bgCache.width = W * dpr; bgCache.height = H * dpr;
       const c = bgCache.getContext('2d'); c.scale(dpr, dpr);
       const gr = c.createLinearGradient(0, 0, 0, H);
-      gr.addColorStop(0, '#060820'); gr.addColorStop(.32, '#14175a'); gr.addColorStop(.62, '#4a2c82'); gr.addColorStop(.84, '#c4587a'); gr.addColorStop(1, '#ffb27a');
+      gr.addColorStop(0, '#12103a'); gr.addColorStop(.26, '#2f2576'); gr.addColorStop(.48, '#7a3a8e'); gr.addColorStop(.67, '#cf4f7c'); gr.addColorStop(.84, '#ff8a5c'); gr.addColorStop(1, '#ffcf8a');
       c.fillStyle = gr; c.fillRect(0, 0, W, H);
       const sun = c.createRadialGradient(W * .5, H, 10, W * .5, H, H * .7);
-      sun.addColorStop(0, 'rgba(255,210,150,.55)'); sun.addColorStop(1, 'rgba(255,210,150,0)');
+      sun.addColorStop(0, 'rgba(255,236,170,.75)'); sun.addColorStop(1, 'rgba(255,210,150,0)');
       c.fillStyle = sun; c.fillRect(0, 0, W, H);
     }
     g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(bgCache, 0, 0);
@@ -96,7 +96,7 @@ A.Sky = (function () {
   function drawGround() {
     const gy = toSY(GY) + 2;
     g.save();
-    for (const [off, col, amp, fr] of [[0, 'rgba(36,22,70,.85)', 10, .011], [14, 'rgba(22,13,48,.96)', 8, .017]]) {
+    for (const [off, col, amp, fr] of [[0, 'rgba(58,24,78,.9)', 10, .011], [14, 'rgba(30,14,52,.97)', 8, .017]]) {
       g.fillStyle = col; g.beginPath(); g.moveTo(0, H);
       for (let x = 0; x <= W; x += 6) g.lineTo(x, gy + off - amp * Math.sin((x - cam.tx * .5) * fr + off) * cam.zoom ** .3 - amp * .6 * Math.sin((x - cam.tx * .5) * fr * 2.3));
       g.lineTo(W, H); g.fill();
@@ -107,7 +107,7 @@ A.Sky = (function () {
   function drawAxis(tNow) {
     g.save(); g.textBaseline = 'middle';
     // altitude rules (age)
-    g.font = '11px "DM Sans",sans-serif'; g.strokeStyle = 'rgba(255,255,255,.1)'; g.fillStyle = 'rgba(255,255,255,.5)'; g.setLineDash([2, 5]);
+    g.font = '11px "DM Sans",sans-serif'; g.strokeStyle = 'rgba(255,255,255,.1)'; g.fillStyle = 'rgba(255,255,255,.6)'; g.setLineDash([2, 5]);
     for (let a = 10; a <= 60; a += 10) {
       const y = toSY(baseY(a)); if (y < 30 || y > GY + 60) continue;
       g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke();
@@ -124,7 +124,7 @@ A.Sky = (function () {
       g.font = '700 12px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.85)';
       let lab = gr.label; const mw = gr.w ? gr.w * (W - 2 * PAD) * cam.zoom - 6 : 200; while (lab.length > 3 && g.measureText(lab).width > mw) lab = lab.slice(0, -2).trimEnd() + '…';
       g.fillText(lab, x, ly - (gr.tick ? 0 : 6));
-      if (!gr.tick) { g.font = '11px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.5)'; g.fillText(A.int(n) + ' aloft', x, ly + 8); }
+      if (!gr.tick && mw > 64) { g.font = '11px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.5)'; g.fillText(A.int(n) + ' aloft', x, ly + 8); }
     });
     if (groups.axis) { g.font = '11px "DM Sans",sans-serif'; g.fillStyle = 'rgba(255,255,255,.5)'; g.fillText(groups.axis, W / 2, ly + 14); }
     // group separators
@@ -231,26 +231,40 @@ A.Sky = (function () {
   }
   function bind() {
     const rect = () => cv.getBoundingClientRect();
-    cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); dragging = { x: e.clientX, y: e.clientY, tx: cam.tx, ty: cam.ty, moved: false }; cam.flying = false; });
+    const ptrs = new Map(); let pinch = null;
+    cv.addEventListener('pointerdown', e => {
+      cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); cam.flying = false;
+      if (ptrs.size === 2) { const [p, q] = [...ptrs.values()]; pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), z: cam.zoom, tx: cam.tx, ty: cam.ty, cx: (p.x + q.x) / 2, cy: (p.y + q.y) / 2 }; dragging = null; }
+      else dragging = { x: e.clientX, y: e.clientY, tx: cam.tx, ty: cam.ty, moved: false };
+    });
     cv.addEventListener('pointermove', e => {
       const r = rect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+      if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && ptrs.size === 2) {
+        const [p, q] = [...ptrs.values()], d = Math.hypot(p.x - q.x, p.y - q.y), cx = (p.x + q.x) / 2 - r.left, cy = (p.y + q.y) / 2 - r.top;
+        const nz = A.clamp(pinch.z * d / pinch.d, 1, 14), k = nz / pinch.z, ox = pinch.cx - r.left, oy = pinch.cy - r.top;
+        cam.zoom = nz; cam.tx = cx - (ox - pinch.tx) * k; cam.ty = cy - (oy - pinch.ty) * k; clampCam(); dirty = true; A.ui.hideTip(); return;
+      }
       if (dragging) {
         const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
-        if (Math.abs(dx) + Math.abs(dy) > 4) { dragging.moved = true; cv.classList.add('drag'); A.ui.hideTip(); }
+        if (Math.abs(dx) + Math.abs(dy) > 6) { dragging.moved = true; cv.classList.add('drag'); A.ui.hideTip(); }
         if (dragging.moved) { cam.tx = dragging.tx + dx; cam.ty = dragging.ty + dy; clampCam(); dirty = true; }
         return;
       }
+      if (e.pointerType === 'touch') return;
       const i = pick(mx, my);
       if (i !== hoverIdx) { hoverIdx = i; cv.classList.toggle('hover', i >= 0); dirty = true; }
       if (i >= 0) A.ui.showTip(order[i], mx, my); else A.ui.hideTip();
     });
-    cv.addEventListener('pointerup', e => {
+    const up = e => {
+      ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null;
       const was = dragging; dragging = null; cv.classList.remove('drag');
-      if (was && !was.moved) {
+      if (e.type === 'pointerup' && was && !was.moved) {
         const r = rect(), i = pick(e.clientX - r.left, e.clientY - r.top);
         if (i >= 0) A.ui.select(order[i].id, { fly: true }); else if (S.sel) A.ui.select(null);
       }
-    });
+    };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
     cv.addEventListener('pointerleave', () => { hoverIdx = -1; A.ui.hideTip(); cv.classList.remove('hover'); });
     cv.addEventListener('wheel', e => { e.preventDefault(); const r = rect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * .0015)); }, { passive: false });
     cv.addEventListener('dblclick', e => { const r = rect(); zoomAt(e.clientX - r.left, e.clientY - r.top, 1.9); });
@@ -268,12 +282,12 @@ A.Sky = (function () {
     applyFilters, resize, computeLayout,
     zoom(k) { zoomAt(W / 2, H / 2, k); },
     reset() { cam.tz = 1; cam.ttx = 0; cam.tty = 0; cam.flying = true; dirty = true; },
-    flyTo(b, cardW = 0) {
+    flyTo(b, cardW = 0, cardH = 0) {
       if (!b || !b.sky) return;
       const t = S.t, age = Math.min(t, b.t1) - b.t0;
       const bx = baseX(b.x), by = baseY(Math.max(0, age));
       cam.tz = Math.max(cam.zoom, 3.4);
-      cam.ttx = (W - cardW) / 2 - bx * cam.tz; cam.tty = H * .55 - by * cam.tz;
+      cam.ttx = (W - cardW) / 2 - bx * cam.tz; cam.tty = (H - cardH) * .55 - by * cam.tz;
       cam.ttx = A.clamp(cam.ttx, W * (1 - cam.tz) - 60, 60); cam.tty = A.clamp(cam.tty, H * (1 - cam.tz) - 80, 60);
       cam.flying = true; dirty = true;
     },

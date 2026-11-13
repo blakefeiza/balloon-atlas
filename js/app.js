@@ -43,8 +43,8 @@
       if (b.sky && S.t < b.t0) S.t = b.t0 + .5;
       // un-hide if filters would exclude it
       if (!b.pass) { clearFilters(true); }
-      A.Card.render(b, card); card.hidden = false;
-      if (opt.fly !== false) A.Sky.flyTo(b, innerWidth > 760 ? Math.min(414, innerWidth - 20) : 0);
+      card.classList.remove('full'); A.Card.render(b, card); card.hidden = false;
+      if (opt.fly !== false) A.Sky.flyTo(b, innerWidth > 760 ? Math.min(414, innerWidth - 20) : 0, innerWidth > 760 ? 0 : innerHeight * .5);
       setHash(); A.Sky.dirty();
     },
     isolateModel(b) { S.filters.model = { key: A.mkey(b), label: (b.fam === 'Other makers' ? b.mfr + ' ' : '') + b.model }; setView('sky'); applyAndSync(); },
@@ -178,8 +178,9 @@
   function bindCard() {
     $('#card').addEventListener('click', e => {
       if (e.target.closest('.c-close')) return A.ui.select(null);
+      if (e.target.closest('.c-handle')) return $('#card').classList.toggle('full');
       const act = e.target.closest('[data-act]')?.dataset.act, b = S.sel;
-      if (act === 'fly') A.Sky.flyTo(b, innerWidth > 760 ? 414 : 0);
+      if (act === 'fly') A.Sky.flyTo(b, innerWidth > 760 ? 414 : 0, innerWidth > 760 ? 0 : innerHeight * .5);
       if (act === 'isolate') A.ui.isolateModel(b);
       if (act === 'lineage') { A.Lineage.focus(b); setView('lineage'); }
       const own = e.target.closest('[data-owner]'); if (own && own.dataset.owner) { $('#q').value = own.dataset.owner; $('#q').dispatchEvent(new Event('input')); $('#q').focus(); }
@@ -214,6 +215,7 @@
     buildSegs(); buildLegend(); bindFilters(); bindTimeline(); bindSearch(); bindCard(); bindAbout();
     $('#zIn').onclick = () => A.Sky.zoom(1.5); $('#zOut').onclick = () => A.Sky.zoom(1 / 1.5); $('#zReset').onclick = () => A.Sky.reset();
     A.$$('.tabs button').forEach(b => b.onclick = () => setView(b.dataset.view));
+    $('#ctlBtn').onclick = () => { const h = $('#hudTL'); const o = h.classList.toggle('open'); $('#ctlBtn').setAttribute('aria-expanded', o); };
     S.t = A.meta.built[0];
     A.Lineage.init($('#lineage'));
     A.Sky.init($('#skyCanvas'));
